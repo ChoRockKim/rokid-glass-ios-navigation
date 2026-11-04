@@ -64,7 +64,7 @@
 ## 다음 단계
 | 순서 | 내용 | 안경 필요 |
 |---|---|---|
-| 1 | 서버 + Slack `/route` (카카오 지오코딩 + 도보 경로, 텍스트 안내). `server/` 에 구현, Slack 수신은 미확인 (`server/README.md`) | 아니오 |
+| 1 | 서버 + Slack `/route` (카카오 지오코딩 + 도보 경로, 텍스트 안내). `server/` 에 구현, 실제 Slack 에서 `/route` → 카카오 → 안경 WS(테스트 클라이언트) 까지 확인 (`server/README.md`) | 아니오 |
 | 2 | TMAP 보행자 API 로 같은 구간 비교 (`turnType`) | 아니오 |
 | 3 | `Rokid_Claude` 클라이언트를 설치해 서버 연결 확인 | 예 |
 | 4 | 안경 표시 앱 (한 줄 안내, 탭=다음). **AIUI(JS+Ink)로 하기로 함.** AIUI 앱이 외부 WebSocket/HTTP 에 붙을 수 있는지 먼저 확인 | 예 (시뮬레이터로 일부 가능) |

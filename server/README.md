@@ -50,6 +50,11 @@ Slack 앱 설정에 필요한 것: Socket Mode 켜기, App-Level Token(`connecti
 |---|---|
 | 카카오 키워드 검색, 도보 경로 (서버 코드로) | 직접 실행 확인 |
 | 안경 WS 인증(정상 토큰 연결, 틀린 토큰 401), 초기 메시지 | 로컬 클라이언트로 확인 |
-| Slack Socket Mode 연결 | 토큰과 `apps.connections.open` 은 성공. 클라우드 세션 네트워크 정책이 `wss-primary.slack.com` 을 막아 WebSocket 연결은 미확인 |
-| Slack `/route` 수신 | 미확인 |
+| Slack Socket Mode 연결 | 확인 |
+| Slack `/route 외대앞역 > 왕십리역` → 카카오 32단계 → 안경 WS 1단계 push | 실제 Slack 에서 확인 |
+| `/route next` → 안경 WS 2단계 | 확인 |
 | 안경 앱 연동 | 로컬 검증 필요 (안경) |
+
+클라우드 세션(프록시 환경)에서 돌릴 때 허용 도메인에 필요한 것: `dapi.kakao.com`, `slack.com`, `wss-primary.slack.com`, `hooks.slack.com`(슬래시 커맨드 응답).
+
+Slack 앱 DM에서 쓰려면 App Home → Messages Tab 켜고 "Allow users to send Slash commands and messages from the messages tab" 체크.
