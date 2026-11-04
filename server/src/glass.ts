@@ -6,6 +6,7 @@ import type { GlassInput, Navigator, Position } from "./navigation.js";
 import { safeEqual, tokenFrom } from "./auth.js";
 import { VIEWER_HTML } from "./viewer.js";
 import type { RoadFeed } from "./roads.js";
+import type { Ota } from "./ota.js";
 
 export function startGlassServer(opts: {
   port: number;
@@ -20,6 +21,8 @@ export function startGlassServer(opts: {
   onPositions?: (p: Position[]) => unknown;
   /** 미니맵 배경 도로 */
   roads?: RoadFeed;
+  /** 안경 앱 OTA (/app/*) */
+  ota?: Ota;
 }): Server {
   const { port, token, nav, log, api } = opts;
   const onPositions = opts.onPositions ?? ((p: Position[]) => nav.updatePositions(p));
@@ -37,6 +40,7 @@ export function startGlassServer(opts: {
       res.end(VIEWER_HTML);
       return;
     }
+    if (opts.ota && (await opts.ota.handle(req, res))) return;
     if (api && (await api(req, res))) return;
     res.writeHead(404).end();
   });
