@@ -13,12 +13,13 @@
 // POST /nav       {"action":"next"|"prev"|"stop"}
 // GET  /status
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { KakaoError } from "./kakao.js";
+import { KakaoError, searchPlaces, type Place, type PlaceCandidate } from "./kakao.js";
 import { messageFor, formatMinutes, type Navigator, type Position } from "./navigation.js";
 import { formatDistance } from "./guide.js";
-import { ChoiceCancelled, planRoute, resolvePair, type ChoosePlace, type PlaceInput } from "./planner.js";
+import { planRoute, resolvePlace, type PlaceInput } from "./planner.js";
 import type { Chooser } from "./chooser.js";
-import { buildTransitGuide, pendingTransit, planTransit, selectTransit, speakOption, summarizeOption } from "./transit.js";
+import { buildTransitGuide, pendingTransit, planTransit, speakOption, summarizeOption, type TransitPlan } from "./transit.js";
+import { distanceM } from "./guide.js";
 import { safeEqual, tokenFrom } from "./auth.js";
 import type { Pairing } from "./pairing.js";
 
@@ -26,6 +27,8 @@ const MAX_BODY = 5 * 1024 * 1024; // Overland 배치(최대 1000점) 여유
 /** 연속 이탈이 이만큼이면 현재 위치에서 재탐색 */
 const REROUTE_AFTER = 3;
 const REROUTE_COOLDOWN_MS = 30_000;
+/** 대중교통을 요청해도 목적지가 이보다 가까우면(직선) 도보로 바로 안내 */
+export const WALK_ONLY_M = 800;
 
 export interface ApiDeps {
   nav: Navigator;
@@ -106,20 +109,77 @@ export function parsePositions(body: unknown): Position[] | null {
 export function createApi(deps: ApiDeps) {
   const { nav, apiToken, kakaoKey, log, notify, pairing, chooser } = deps;
 
-  /** 후보 여럿 → 안경에 "맥도날드 외대점 · 770m" 목록. 안경이 없거나 시간이 지나면 가장 가까운 곳 */
-  const choosePlace: ChoosePlace = async (query, candidates) => {
-    if (!chooser) return candidates[0]!;
-    const items = candidates.map((c) => (c.distance === null ? c.name : `${c.name} · ${formatDistance(c.distance)}`));
-    log(`choose: ${query} → ${candidates.length} candidates (glasses ${chooser.available ? "on" : "off"})`);
-    const i = await chooser.ask(`목적지 선택 · ${query}`, items);
-    if (i === -1) throw new ChoiceCancelled();
-    const picked = candidates[i ?? 0] ?? candidates[0]!;
-    log(`choose: ${i === null ? "default" : `#${i + 1}`} ${picked.name}`);
-    return picked;
-  };
+  const pt = (p: Place) => ({ lon: p.x, lat: p.y, name: p.name });
+  const candLabel = (c: PlaceCandidate) => (c.distance === null ? c.name : `${c.name} · ${formatDistance(c.distance)}`);
+
+  /** 출발지를 정하고 그 근처에서 목적지 후보를 찾는다 */
+  async function findDestination(from: PlaceInput, to: string): Promise<{ f: Place; cands: PlaceCandidate[] }> {
+    const f = await resolvePlace(from, kakaoKey);
+    const cands = await searchPlaces(to, kakaoKey, { lon: f.x, lat: f.y });
+    if (!cands.length) throw new KakaoError(`장소를 찾지 못했습니다: ${to}`);
+    return { f, cands };
+  }
+
+  /** 안경에서 고르기. 고른 번호 (시간이 지나면 0 = 첫 번째), 취소면 null */
+  async function pickOnGlasses(title: string, items: string[]): Promise<number | null> {
+    const i = await chooser!.ask(title, items);
+    log(`choose: ${title} → ${i === null ? "default" : i === -1 ? "cancel" : `#${i + 1}`}`);
+    return i === -1 ? null : (i ?? 0);
+  }
+
+  /** 도보 안내 시작. 단축어가 읽을 문장을 돌려준다 */
+  async function startWalk(f: Place, t: Place): Promise<string> {
+    const planned = await planRoute(pt(f), pt(t), kakaoKey);
+    nav.start({ ...planned, startedBy: "api" });
+    const a = nav.current!;
+    log(`api route: ${planned.from.name} -> ${planned.to.name}, ${a.guide.length} steps`);
+    notify?.(`:walking: *${planned.from.name} → ${planned.to.name}* · ${formatDistance(planned.route.totalDistance)} · 약 ${formatMinutes(planned.route.totalTime)} · ${a.guide.length}단계 (단축어에서 시작)`);
+    return `${planned.to.name}까지 ${formatDistance(planned.route.totalDistance)}, 약 ${formatMinutes(planned.route.totalTime)}.${a.guide[0] ? ` 먼저 ${a.guide[0].line2.split(" · ")[0]}.` : ""}`;
+  }
+
+  /**
+   * 대중교통 후보. 도보로 대신 가야 하면 그 이유(단축어가 읽을 문장 앞부분)를 돌려준다:
+   * 직선 WALK_ONLY_M 안이면 묻지도 않고, 카카오가 경로를 안 주면(NO_RESULTS, 2026-11-04 약 130m 에서 확인) 그것도 도보로
+   */
+  async function transitOrWalk(f: Place, t: Place): Promise<TransitPlan | string> {
+    const d = distanceM([f.x, f.y], [t.x, t.y]);
+    if (d < WALK_ONLY_M) {
+      log(`transit: ${t.name} 직선 ${Math.round(d)}m → 도보`);
+      return "가까워서 도보로 안내합니다.";
+    }
+    try {
+      return await planTransit(pt(f), pt(t), kakaoKey);
+    } catch (e) {
+      if (!(e instanceof KakaoError)) throw e;
+      log(`transit 없음 (${e.message}) → 도보: ${t.name}`);
+      return "대중교통 경로가 없어 도보로 안내합니다.";
+    }
+  }
+
+  async function startTransitOption(plan: TransitPlan, i: number): Promise<string> {
+    const option = plan.options[i]!;
+    const { guide, route: r } = await buildTransitGuide(plan, option, kakaoKey);
+    nav.start({ from: plan.from, to: plan.to, route: r, guide, mode: "transit", startedBy: "api" });
+    notify?.(`:bus: *${summarizeOption(option, i)}* (단축어에서 시작)`);
+    return `${i + 1}번 경로로 안내합니다. ${guide[0]?.line1.replace(/^\S+\s/, "") ?? ""}`;
+  }
+
+  /** 안경에서 이어서 하는 흐름 (단축어에는 이미 응답함). 결과는 안경 알림으로 */
+  function continueOnGlasses(what: string, job: () => Promise<string | null>) {
+    selectReply = { at: Date.now(), speech: "안경에서 고르세요." };
+    pendingTransit.set(null);
+    void job()
+      .then((text) => chooser?.notice(text ?? `${what} 취소`))
+      .catch((e) => {
+        log(`glasses flow failed: ${e instanceof Error ? e.message : String(e)}`);
+        chooser?.notice("경로 찾기 실패");
+      });
+  }
+
+  /** 단축어 /transit/select 가 대중교통 후보 대신 받을 답 (도보로 대신 시작했거나 안경에서 고르는 중) */
+  let selectReply: { at: number; speech: string } | null = null;
+
   let lastReroute = 0;
-  /** /transit 이 대중교통 대신 도보로 시작한 시각 */
-  let walkFallbackAt = 0;
   let rerouting = false;
 
   async function maybeReroute(offRouteCount: number | undefined) {
@@ -263,16 +323,23 @@ export function createApi(deps: ApiDeps) {
         }
         if (!from) throw new HttpError(400, "from 또는 lat/lon 이 필요합니다 (받은 위치도 없음)");
 
-        const planned = await planRoute(from, to, kakaoKey, choosePlace);
-        nav.start({ ...planned, startedBy: "api" });
-        const a = nav.current!;
-        log(`api route: ${planned.from.name} -> ${planned.to.name}, ${a.guide.length} steps`);
-        notify?.(`:walking: *${planned.from.name} → ${planned.to.name}* · ${formatDistance(planned.route.totalDistance)} · 약 ${formatMinutes(planned.route.totalTime)} · ${a.guide.length}단계 (단축어에서 시작)`);
+        const { f, cands } = await findDestination(from, to);
+        if (cands.length > 1 && chooser?.available) {
+          // 같은 이름 지점이 여럿 → 안경에서 고르게 하고 단축어에는 바로 응답
+          log(`choose: ${to} → ${cands.length} candidates`);
+          continueOnGlasses("목적지 선택", async () => {
+            const i = await pickOnGlasses(`목적지 선택 · ${to}`, cands.map(candLabel));
+            if (i === null) return null;
+            const t = cands[i]!;
+            await startWalk(f, t);
+            return `${t.name} 안내 시작`;
+          });
+          send(res, 200, { active: false, choosing: true, to, speech: `안경에서 ${to} ${cands.length}곳 중 고르세요.` });
+          return true;
+        }
+        const speech = await startWalk(f, cands[0]!);
         // 단축어가 바로 읽어 줄 수 있게 speech 문구도 준다
-        send(res, 200, {
-          ...summary(),
-          speech: `${planned.to.name}까지 ${formatDistance(planned.route.totalDistance)}, 약 ${formatMinutes(planned.route.totalTime)}.${a.guide[0] ? ` 먼저 ${a.guide[0].line2.split(" · ")[0]}.` : ""}`,
-        });
+        send(res, 200, { ...summary(), speech });
         return true;
       }
 
@@ -288,32 +355,46 @@ export function createApi(deps: ApiDeps) {
           else if (nav.lastKnownPosition) from = { lat: nav.lastKnownPosition.lat, lon: nav.lastKnownPosition.lon };
         }
         if (!from) throw new HttpError(400, "from 또는 lat/lon 이 필요합니다");
-        // 목적지를 먼저 정하고(후보가 여럿이면 안경에서 고름), 그 좌표로 대중교통을 찾는다
-        const [f, t] = await resolvePair(from, to, kakaoKey, choosePlace);
-        const fromPt = { lon: f.x, lat: f.y, name: f.name };
-        const toPt = { lon: t.x, lat: t.y, name: t.name };
-        let plan;
-        try {
-          plan = await planTransit(fromPt, toPt, kakaoKey);
-        } catch (e) {
-          if (!(e instanceof KakaoError)) throw e;
-          // 너무 가까우면 카카오가 대중교통 경로를 주지 않는다 (NO_RESULTS, 2026-11-04 약 170m 에서 확인) → 도보로 바로 안내
-          log(`transit 없음 (${e.message}) → 도보: ${t.name}`);
-          const walk = await planRoute(fromPt, toPt, kakaoKey);
-          nav.start({ ...walk, startedBy: "api" });
+        const { f, cands } = await findDestination(from, to);
+        if (cands.length > 1 && chooser?.available) {
+          // 목적지와 대중교통 후보 모두 안경에서 고른다. 단축어 "목록에서 선택"이 비지 않게 한 줄을 준다
+          log(`choose: ${to} → ${cands.length} candidates (transit)`);
+          continueOnGlasses("선택", async () => {
+            const i = await pickOnGlasses(`목적지 선택 · ${to}`, cands.map(candLabel));
+            if (i === null) return null;
+            const t = cands[i]!;
+            const plan = await transitOrWalk(f, t);
+            if (typeof plan === "string") {
+              await startWalk(f, t);
+              return `${t.name} 도보 안내 시작`;
+            }
+            const k = plan.options.length > 1 ? await pickOnGlasses(`경로 선택 · ${t.name}`, plan.options.map(summarizeOption)) : 0;
+            if (k === null) return null;
+            await startTransitOption(plan, k);
+            return `${t.name} 안내 시작`;
+          });
+          send(res, 200, { choosing: true, to, options: ["① 안경에서 고르는 중"], speech: `안경에서 ${to} ${cands.length}곳 중 고르세요.` });
+          return true;
+        }
+        const t = cands[0]!;
+        const plan = await transitOrWalk(f, t);
+        if (typeof plan === "string") {
+          await startWalk(f, t);
           pendingTransit.set(null);
-          walkFallbackAt = Date.now();
-          const min = formatMinutes(walk.route.totalTime);
+          selectReply = { at: Date.now(), speech: "도보로 안내 중입니다." };
+          const a = nav.current!;
+          const min = formatMinutes(a.route.totalTime);
           send(res, 200, {
             from: f.name,
             to: t.name,
             walking: true,
             // 단축어 "목록에서 선택"이 비지 않게 한 줄. 고르면 /transit/select 가 "도보로 안내 중"으로 답한다
             options: [`① 도보 ${min} · ${t.name} (안내 중)`],
-            speech: `대중교통 경로가 없어 도보로 안내합니다. ${t.name}까지 ${formatDistance(walk.route.totalDistance)}, 약 ${min}.`,
+            speech: `${plan} ${t.name}까지 ${formatDistance(a.route.totalDistance)}, 약 ${min}.`,
           });
           return true;
         }
+        selectReply = null;
         pendingTransit.set(plan);
         send(res, 200, {
           from: plan.from.name,
@@ -325,9 +406,9 @@ export function createApi(deps: ApiDeps) {
       }
 
       if (route === "POST /transit/select") {
-        // 바로 앞의 /transit 이 도보로 대신 시작했으면 그대로 둔다
-        if (!pendingTransit.get() && Date.now() - walkFallbackAt < 5 * 60_000 && nav.current?.mode === "walk") {
-          send(res, 200, { ...summary(), speech: "도보로 안내 중입니다." });
+        // 바로 앞의 /transit 이 도보로 대신 시작했거나 안경에서 고르는 중이면 그 안내만
+        if (!pendingTransit.get() && selectReply && Date.now() - selectReply.at < 5 * 60_000) {
+          send(res, 200, { ...summary(), speech: selectReply.speech });
           return true;
         }
         // 번호(1부터) 또는 단축어 "목록에서 선택"으로 고른 후보 문장 그대로("① 16분 · …")
@@ -343,17 +424,11 @@ export function createApi(deps: ApiDeps) {
           }
         }
         if (n === undefined) throw new HttpError(400, "option (1부터 번호 또는 후보 문장) is required");
-        let picked;
-        try {
-          picked = await selectTransit(n - 1, kakaoKey);
-        } catch (e) {
-          if (e instanceof KakaoError) throw e;
-          throw new HttpError(400, e instanceof Error ? e.message : String(e));
-        }
-        const { plan, option, guide, route: r } = picked;
-        nav.start({ from: plan.from, to: plan.to, route: r, guide, mode: "transit", startedBy: "api" });
-        notify?.(`:bus: *${summarizeOption(option, n - 1)}* (단축어에서 시작)`);
-        send(res, 200, { ...summary(), speech: `${n}번 경로로 안내합니다. ${guide[0]?.line1.replace(/^\S+\s/, "") ?? ""}` });
+        const plan = pendingTransit.get();
+        if (!plan) throw new HttpError(400, "먼저 대중교통 후보를 조회하세요.");
+        if (!plan.options[n - 1]) throw new HttpError(400, `후보 번호는 1~${plan.options.length} 입니다.`);
+        const speech = await startTransitOption(plan, n - 1);
+        send(res, 200, { ...summary(), speech });
         return true;
       }
 
@@ -375,9 +450,7 @@ export function createApi(deps: ApiDeps) {
         return true;
       }
     } catch (e) {
-      // 안경에서 목적지 고르기를 취소: 단축어가 읽을 수 있게 200 + speech (대중교통 단축어용 빈 options)
-      if (e instanceof ChoiceCancelled) send(res, 200, { active: false, speech: e.message, options: [] });
-      else if (e instanceof HttpError) send(res, e.status, { error: e.message });
+      if (e instanceof HttpError) send(res, e.status, { error: e.message });
       else if (e instanceof KakaoError) {
         log(`api ${route}: ${e.message}`);
         send(res, 502, { error: e.message, speech: e.message });

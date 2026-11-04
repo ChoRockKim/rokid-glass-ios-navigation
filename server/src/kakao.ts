@@ -108,20 +108,26 @@ const toCandidate = (d: RawDoc): PlaceCandidate => ({
 });
 
 export async function searchPlaces(query: string, key: string, near?: { lon: number; lat: number }): Promise<PlaceCandidate[]> {
-  if (near) {
+  const search = async (sort: "distance" | "accuracy", size: number) => {
     const url = new URL("/v2/local/search/keyword.json", BASE);
     url.searchParams.set("query", query);
-    url.searchParams.set("x", String(near.lon));
-    url.searchParams.set("y", String(near.lat));
-    url.searchParams.set("radius", "20000");
-    url.searchParams.set("sort", "distance");
-    url.searchParams.set("size", "15");
+    url.searchParams.set("size", String(size));
+    url.searchParams.set("sort", sort);
+    if (near) {
+      url.searchParams.set("x", String(near.lon));
+      url.searchParams.set("y", String(near.lat));
+      if (sort === "distance") url.searchParams.set("radius", "20000");
+    }
     const body = (await getJson(url, key)) as { documents?: RawDoc[] };
-    const picked = pickCandidates(query, (body.documents ?? []).map(toCandidate));
-    if (picked.length) return picked;
-  }
-  const top = await searchPlace(query, key);
-  return top ? [{ ...top, distance: null }] : [];
+    return (body.documents ?? []).map(toCandidate);
+  };
+  if (!near) return (await search("accuracy", 1)).slice(0, 1);
+  const [nearby, [top]] = await Promise.all([search("distance", 15), search("accuracy", 1)]);
+  // 정확도 1등도 20km 안이면 후보에 끼워 넣는다 (예: 경희대학교병원 옆에서 "경희대학교" → 병원 시설 + 서울캠퍼스)
+  const pool = top && top.distance !== null && top.distance <= 20_000 ? [...nearby, top].sort((x, y) => (x.distance ?? 0) - (y.distance ?? 0)) : nearby;
+  const picked = pickCandidates(query, pool);
+  if (picked.length) return picked;
+  return top ? [top] : [];
 }
 
 interface RawWalk {

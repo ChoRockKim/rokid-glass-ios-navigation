@@ -153,3 +153,21 @@ test("etaSec: 남은 단계 시간 합, 지금 단계는 남은 거리 비율 / 
   nav.move(1);
   assert.equal((pos.at(-1) as { fixAge?: number }).fixAge, undefined);
 });
+
+test("saved / restore: 재시작 뒤 같은 단계부터, JSON 왕복", () => {
+  const route = parseWalk(sample);
+  const nav = new Navigator();
+  const saves: (unknown | null)[] = [];
+  nav.onSave((s) => saves.push(s));
+  const place = { name: "x", address: "", x: 0, y: 0 };
+  nav.start({ from: place, to: { ...place, name: "선릉역" }, route, startedBy: "U1" });
+  nav.move(1);
+  const saved = JSON.parse(JSON.stringify(nav.saved()));
+  assert.equal(saves.length, 2);
+  const nav2 = new Navigator();
+  nav2.restore(saved);
+  const m = nav2.snapshot();
+  assert.ok(m.type === "step" && m.index === 1 && m.destination === "선릉역");
+  nav.stop();
+  assert.equal(saves.at(-1), null);
+});

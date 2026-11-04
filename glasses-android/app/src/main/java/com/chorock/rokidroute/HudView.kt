@@ -271,7 +271,9 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
             val sel = i == m.selected
             mid.color = if (sel) green else dim
             mid.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            canvas.drawText((if (sel) "▶ " else "   ") + item, 18f, y, mid)
+            // 대중교통 후보처럼 긴 항목은 한 줄로 자른다
+            val text = TextUtils.ellipsize((if (sel) "▶ " else "   ") + item, mid, W - 36f, TextUtils.TruncateAt.END)
+            canvas.drawText(text, 0, text.length, 18f, y, mid)
             y += 27f
         }
         mid.typeface = Typeface.DEFAULT

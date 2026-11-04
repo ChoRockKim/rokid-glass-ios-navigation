@@ -159,13 +159,13 @@ class MainActivity : Activity() {
         when (m.optString("type")) {
             // 메뉴 "경로 다시 찾기" 결과 (이 안경에만 온다)
             "notice" -> showNotice(m.optString("text"))
-            // 폰에서 길안내를 시작했는데 목적지 후보가 여럿 (예: 맥도날드 지점들). 고를 때까지 폰 단축어가 기다린다
+            // 폰에서 길안내를 시작했는데 목적지 후보가 여럿 (예: 맥도날드 지점들), 또는 그다음 대중교통 경로 후보. 폰 단축어는 이미 끝났다
             "choose" -> {
                 val items = m.getJSONArray("items").let { a -> List(a.length()) { a.getString(it) } }
                 choosing = m.getInt("id")
                 hud.menu = HudView.Menu(
                     items, title = m.optString("title", "선택"),
-                    note = "${m.optInt("timeoutSec", 40)}초 안에 안 고르면 가장 가까운 곳",
+                    note = "${m.optInt("timeoutSec", 60)}초 안에 안 고르면 맨 위 항목",
                     hint = "쓸기 이동 · 탭 선택 · 뒤로 취소",
                 )
             }

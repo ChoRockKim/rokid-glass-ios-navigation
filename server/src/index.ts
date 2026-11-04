@@ -1,4 +1,6 @@
-import { Navigator } from "./navigation.js";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { Navigator, type SavedRoute } from "./navigation.js";
 import { startGlassServer } from "./glass.js";
 import { createApi } from "./api.js";
 import { RoadFeed } from "./roads.js";
@@ -31,6 +33,32 @@ const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN ?? "";
 const log = (m: string) => console.log(`[${new Date().toISOString()}] ${m}`);
 const nav = new Navigator();
 const chooser = new Chooser();
+
+// 진행 중인 경로를 볼륨에 저장해 두고 재시작하면 이어서 안내한다 (배포·재시작 때 안내가 사라지던 문제)
+const STATE_FILE = process.env.STATE_FILE ?? "/data/nav.json";
+const STATE_MAX_AGE_MS = 12 * 3600_000;
+try {
+  if (existsSync(STATE_FILE)) {
+    const saved = JSON.parse(readFileSync(STATE_FILE, "utf8")) as SavedRoute | null;
+    if (saved?.v === 1 && Date.now() - saved.savedAt < STATE_MAX_AGE_MS) {
+      nav.restore(saved);
+      log(`restored route: ${saved.to.name} step ${saved.index + 1}/${saved.guide.length}`);
+    }
+  }
+} catch (e) {
+  log(`restore failed: ${e instanceof Error ? e.message : String(e)}`);
+}
+let saveWarned = false;
+nav.onSave((s) => {
+  try {
+    mkdirSync(dirname(STATE_FILE), { recursive: true });
+    writeFileSync(STATE_FILE + ".tmp", JSON.stringify(s));
+    renameSync(STATE_FILE + ".tmp", STATE_FILE);
+  } catch (e) {
+    if (!saveWarned) log(`경로 저장 실패 (${STATE_FILE}): ${e instanceof Error ? e.message : String(e)}`);
+    saveWarned = true;
+  }
+});
 
 nav.onChange((m) => log(`nav -> ${m.type}${m.type === "step" ? ` ${m.index + 1}/${m.total}` : ""}`));
 

@@ -1,12 +1,14 @@
 // 안경에 선택지를 띄우고 고른 번호를 기다린다 (목적지 후보가 여럿일 때).
-// 폰 단축어 요청은 그동안 응답을 미뤘다가, 고르면 평소처럼 응답한다 → 단축어는 바꿀 필요 없음.
+// 폰 단축어 요청은 "안경에서 고르세요"로 바로 응답하고, 고르기와 경로 시작은 그 뒤에 이어서 한다.
+// (2026-11-04 응답을 20초 미뤘더니 폰 쪽에서 "네트워크 연결이 유실되었습니다" — 서버는 200 을 보냈지만 폰이 받지 못함)
 // 선택지를 띄울 수 있는 화면(안경 APK 0.3.4+, WebSocket ?choose=1)이 없거나 시간이 지나면 null → 호출한 쪽이 기본값(가장 가까운 곳)을 쓴다.
 
 export type ChooseMessage =
   | { type: "choose"; id: number; title: string; items: string[]; timeoutSec: number }
-  | { type: "choose-done"; id: number };
+  | { type: "choose-done"; id: number }
+  | { type: "notice"; text: string };
 
-export const CHOOSE_TIMEOUT_MS = 40_000;
+export const CHOOSE_TIMEOUT_MS = 60_000;
 
 export class Chooser {
   private screens = new Set<(m: ChooseMessage) => void>();
@@ -35,6 +37,11 @@ export class Chooser {
       this.pending = { id, resolve, timer };
       for (const send of this.screens) send({ type: "choose", id, title, items, timeoutSec: Math.round(this.timeoutMs / 1000) });
     });
+  }
+
+  /** 선택지를 띄운 화면들에 짧은 알림 (예: "맥도날드 외대점까지 432m") */
+  notice(text: string) {
+    for (const send of this.screens) send({ type: "notice", text });
   }
 
   /** 안경이 보낸 답. index -1 = 취소 */

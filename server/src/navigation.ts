@@ -226,6 +226,19 @@ export function messageFor(active: ActiveRoute | null, now = Date.now()): GlassM
   };
 }
 
+/** 서버가 재시작돼도 안내를 이어 가려고 디스크에 남기는 것 (진행 거리·위치는 다음 위치로 다시 잡힌다) */
+export interface SavedRoute {
+  v: 1;
+  savedAt: number;
+  from: Place;
+  to: Place;
+  mode: "walk" | "transit";
+  route: WalkRoute;
+  guide: GuideStep[];
+  index: number;
+  startedBy: string;
+}
+
 export interface PositionResult {
   accepted: boolean;
   reason?: "no-route" | "inaccurate" | "stale";
@@ -239,6 +252,7 @@ export interface PositionResult {
 export class Navigator {
   private active: ActiveRoute | null = null;
   private listeners = new Set<(msg: GlassMessage) => void>();
+  private saveListeners = new Set<(s: SavedRoute | null) => void>();
   private mapListeners = new Set<(msg: MapMessage) => void>();
   private lastMapPos: MapMessage | null = null;
   /** 마지막으로 실제 위치를 반영한 시각 (서버 시계) */
@@ -256,6 +270,29 @@ export class Navigator {
   onChange(fn: (msg: GlassMessage) => void) {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
+  }
+
+  /** 경로 시작·단계 변경·종료 때마다 저장할 내용 (종료면 null) */
+  onSave(fn: (s: SavedRoute | null) => void) {
+    this.saveListeners.add(fn);
+    return () => this.saveListeners.delete(fn);
+  }
+
+  saved(): SavedRoute | null {
+    const a = this.active;
+    if (!a) return null;
+    return { v: 1, savedAt: this.now(), from: a.from, to: a.to, mode: a.mode, route: a.route, guide: a.guide, index: a.index, startedBy: a.startedBy };
+  }
+
+  private save() {
+    const s = this.saved();
+    for (const fn of this.saveListeners) fn(s);
+  }
+
+  /** 저장해 둔 경로를 그 단계부터 다시 시작 */
+  restore(s: SavedRoute) {
+    this.start({ from: s.from, to: s.to, route: s.route, guide: s.guide, mode: s.mode, startedBy: s.startedBy });
+    if (s.index > 0) this.move(Math.min(s.index, s.guide.length));
   }
 
   onMap(fn: (msg: MapMessage) => void) {
@@ -344,6 +381,7 @@ export class Navigator {
     const p0 = this.active.tracker.pointAt(0);
     if (p0) this.emitMap({ type: "map-pos", ...p0, snapped: true, next: guide.length > 1 ? 1 : null });
     this.emit();
+    this.save();
   }
 
   /** 재탐색: 목적지는 그대로, 경로만 바꾼다 */
@@ -371,12 +409,14 @@ export class Navigator {
       if (p) this.emitMap({ type: "map-pos", ...p, snapped: true, next: a.index + 1 < a.guide.length ? a.index + 1 : null });
     }
     this.emit();
+    this.save();
   }
 
   stop() {
     this.active = null;
     this.lastMapPos = null;
     this.emit();
+    this.save();
   }
 
   snapshot(): GlassMessage {
@@ -409,9 +449,11 @@ export class Navigator {
   /** 위치 여러 개를 시간순으로 반영하고 마지막에 한 번만 안경에 보낸다 */
   updatePositions(positions: Position[]): PositionResult {
     const sorted = [...positions].sort((x, y) => (x.ts ?? 0) - (y.ts ?? 0));
+    const before = this.active ? `${this.active.index}` : null;
     let result: PositionResult = { accepted: false, reason: "no-route" };
     for (const p of sorted) result = this.apply(p);
     this.emit(false);
+    if (this.active && `${this.active.index}` !== before) this.save();
     return result;
   }
 
