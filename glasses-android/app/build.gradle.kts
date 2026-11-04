@@ -19,8 +19,8 @@ android {
         applicationId = "com.chorock.rokidroute"
         minSdk = 28
         targetSdk = 34
-        versionCode = 4
-        versionName = "0.2.1"
+        versionCode = 5
+        versionName = "0.2.2"
         buildConfigField("String", "SERVER_BASE", "\"$serverBase\"")
         buildConfigField("String", "DEVICE_TOKEN", "\"$deviceToken\"")
     }

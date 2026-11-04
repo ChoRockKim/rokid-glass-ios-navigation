@@ -63,7 +63,7 @@ class ServerClient(
         onStatus("연결 코드 요청 중…")
         val req = Request.Builder().url("$base/pair/request").post(ByteArray(0).toRequestBody()).build()
         http.newCall(req).enqueue(object : okhttp3.Callback {
-            override fun onFailure(call: okhttp3.Call, e: IOException) = main.post { retry { requestPair() } }.let {}
+            override fun onFailure(call: okhttp3.Call, e: IOException) = main.post { lastError = reason(e); retry { requestPair() } }.let {}
             override fun onResponse(call: okhttp3.Call, response: Response) {
                 val body = response.body?.string().orEmpty()
                 main.post {
@@ -115,6 +115,7 @@ class ServerClient(
         ws = http.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) = main.post {
                 waitMs = 2000
+                lastError = ""
                 onStatus("")
                 send(JSONObject().put("type", "sync"))
             }.let {}
@@ -126,6 +127,8 @@ class ServerClient(
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) = main.post {
                 if (webSocket !== ws) return@post
                 ws = null
+                lastError = if (response != null) "서버 거절 ${response.code}" else reason(t)
+                android.util.Log.w("Route", "ws failure: $lastError", t)
                 if (response?.code == 401) {
                     // 토큰이 바뀌었으면 다시 페어링
                     tokenStore.set(null)
@@ -141,11 +144,23 @@ class ServerClient(
         })
     }
 
+    private var lastError: String = ""
+
+    /** 실패 원인을 사람이 읽을 말로 (안경 화면에 보여 준다) */
+    private fun reason(t: Throwable?): String = when (t) {
+        null -> ""
+        is java.net.UnknownHostException -> "인터넷 없음(주소 못 찾음)"
+        is java.net.SocketTimeoutException -> "서버 응답 없음"
+        is java.net.ConnectException -> "연결 거부"
+        is javax.net.ssl.SSLException -> "보안 연결 실패(시계?)"
+        else -> t.javaClass.simpleName
+    }
+
     private fun retry(action: () -> Unit) {
         if (!running) return
         val w = waitMs
         waitMs = (waitMs * 2).coerceAtMost(30_000)
-        onStatus("끊김 · ${w / 1000}초 뒤 재연결")
+        onStatus("${lastError.ifEmpty { "끊김" }} · ${w / 1000}초 뒤 재연결")
         main.postDelayed(action, w)
     }
 
