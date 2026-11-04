@@ -9,7 +9,13 @@ Kotlin 안드로이드 앱. 서버(`server/`)의 WebSocket `/glass?map=1` 에 �
 - 위: `3/14`, `→ 목적지` / 가운데: 안내 두 줄 / 배경: 미니맵(경로·주변 도로·다음 회전 ◆·나 ▲)
 - 처음 실행하면 **연결 코드 4자리**가 뜬다 (페어링).
 
-## 페어링 (토큰을 APK 에 넣지 않기 위해)
+## 연결 방식
+**기본: 안경 전용 토큰을 APK 에 넣어 빌드** → 설치하고 켜면 바로 연결.
+- 서버 Railway 변수 `GLASS_DEVICE_TOKEN` 과 같은 값을 빌드 때 `-PDEVICE_TOKEN=…` 으로 준다. 저장소에는 넣지 않는다.
+- **APK 안에 토큰이 들어 있으므로 APK 를 남에게 주지 말 것.** 새면 Railway 에서 `GLASS_DEVICE_TOKEN` 만 바꾸고 APK 를 다시 빌드.
+- 서버가 이 토큰을 거절(401)하면 아래 페어링으로 넘어간다.
+
+### 예비: 페어링
 1. 안경 앱을 켜면 `연결 코드 1234` 가 뜬다 (서버 `POST /pair/request`).
 2. 폰 단축어 **"안경 연결"** 로 그 코드를 보낸다 (`POST /pair/approve`, `API_TOKEN` 인증). 만드는 법은 `docs/ios-shortcuts.md`.
 3. 안경이 2초마다 확인하다가 승인되면 토큰을 받아 저장하고 연결한다. 다음부터는 바로 연결.
@@ -35,7 +41,7 @@ Kotlin 안드로이드 앱. 서버(`server/`)의 WebSocket `/glass?map=1` 에 �
 ```bash
 cd glasses-android
 echo "sdk.dir=/path/to/android-sdk" > local.properties   # platforms;android-34, build-tools;34.0.0
-./gradlew assembleDebug                                   # → app/build/outputs/apk/debug/app-debug.apk
+./gradlew assembleDebug -PDEVICE_TOKEN="$(cat device_token)"  # → app/build/outputs/apk/debug/app-debug.apk
 ```
 서버 주소를 바꾸려면 `./gradlew assembleDebug -PROUTE_SERVER=https://…`.
 2026-11-04 클라우드 세션에서 빌드 성공 (3.5MB, 디버그 서명). Maven Central 이 429 를 줄 때는 Google 미러(`maven-central.storage-download.googleapis.com/maven2`)로 바꿔 빌드했다 (세션 전용 init 스크립트, 저장소 설정은 그대로).

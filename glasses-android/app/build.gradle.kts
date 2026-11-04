@@ -7,6 +7,9 @@ plugins {
 
 // 서버 주소는 공개 정보라 기본값을 둔다. 토큰은 APK 에 넣지 않는다 (페어링으로 받음).
 val serverBase = (project.findProperty("ROUTE_SERVER") as String?) ?: "https://route-server-production.up.railway.app"
+// 안경 전용 토큰 (서버 GLASS_DEVICE_TOKEN 과 같은 값). 저장소에 넣지 않고 빌드할 때만 준다:
+//   ./gradlew assembleDebug -PDEVICE_TOKEN=…   (없으면 빈 값 → 페어링으로 연결)
+val deviceToken = (project.findProperty("DEVICE_TOKEN") as String?) ?: ""
 
 android {
     namespace = "com.chorock.rokidroute"
@@ -16,9 +19,10 @@ android {
         applicationId = "com.chorock.rokidroute"
         minSdk = 28
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.2.0"
         buildConfigField("String", "SERVER_BASE", "\"$serverBase\"")
+        buildConfigField("String", "DEVICE_TOKEN", "\"$deviceToken\"")
     }
 
     buildFeatures { buildConfig = true }

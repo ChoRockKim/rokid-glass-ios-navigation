@@ -17,6 +17,8 @@ function requireEnv(name: string): string {
 
 const KAKAO_REST_KEY = requireEnv("KAKAO_REST_KEY");
 const GLASS_TOKEN = requireEnv("GLASS_TOKEN");
+/** 안경 APK 에 빌드 때 넣는 전용 토큰 (선택). 새면 이것만 바꾸고 APK 를 다시 빌드한다 */
+const GLASS_DEVICE_TOKEN = process.env.GLASS_DEVICE_TOKEN ?? "";
 const PORT = Number(process.env.PORT ?? 8787);
 /** 폰(단축어, Overland)용 API 토큰. 없으면 API 를 끈다 */
 const API_TOKEN = process.env.API_TOKEN ?? "";
@@ -37,7 +39,7 @@ const api = API_TOKEN
 if (!api) log("API_TOKEN 이 없어 폰용 HTTP API(/location, /route, /nav, /status)를 끕니다");
 
 const roads = new RoadFeed(nav, log);
-const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, nav, log, api, onPositions: api?.ingest, roads });
+const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, extraTokens: GLASS_DEVICE_TOKEN ? [GLASS_DEVICE_TOKEN] : [], nav, log, api, onPositions: api?.ingest, roads });
 const stopPoller = startRealtimePoller(nav, providersFromEnv(log), log);
 
 if (SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {

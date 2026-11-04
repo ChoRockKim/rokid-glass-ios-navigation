@@ -10,6 +10,8 @@ import type { RoadFeed } from "./roads.js";
 export function startGlassServer(opts: {
   port: number;
   token: string;
+  /** 추가로 받아 줄 토큰 (안경 APK 에 넣은 GLASS_DEVICE_TOKEN 등) */
+  extraTokens?: string[];
   nav: Navigator;
   log: (m: string) => void;
   /** 폰용 HTTP API. 처리했으면 true */
@@ -45,7 +47,8 @@ export function startGlassServer(opts: {
   http.on("upgrade", (req, socket, head) => {
     const path = new URL(req.url ?? "/", "http://localhost").pathname;
     const given = tokenFrom(req);
-    if (path !== "/glass" || !given || !safeEqual(given, token)) {
+    const ok = given !== null && [token, ...(opts.extraTokens ?? [])].some((t) => t && safeEqual(given, t));
+    if (path !== "/glass" || !ok) {
       socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
       socket.destroy();
       return;

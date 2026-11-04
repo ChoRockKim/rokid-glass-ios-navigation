@@ -41,8 +41,16 @@ class MainActivity : Activity() {
         client = ServerClient(
             base = BuildConfig.SERVER_BASE,
             tokenStore = object : ServerClient.TokenStore {
+                // 페어링으로 받은 토큰이 있으면 그것, 없으면 APK 에 넣은 안경 전용 토큰 (서버가 거절하면 페어링으로)
                 override fun get() = prefs.getString("glassToken", null)
-                override fun set(token: String?) { prefs.edit().putString("glassToken", token).apply() }
+                    ?: BuildConfig.DEVICE_TOKEN.takeIf { it.isNotEmpty() && !prefs.getBoolean("deviceTokenRejected", false) }
+                override fun set(token: String?) {
+                    val e = prefs.edit().putString("glassToken", token)
+                    // 저장된 토큰 없이 null 로 지우는 건 APK 토큰이 거절됐다는 뜻 → 페어링으로 넘어간다
+                    if (token == null && prefs.getString("glassToken", null) == null) e.putBoolean("deviceTokenRejected", true)
+                    if (token != null) e.putBoolean("deviceTokenRejected", false)
+                    e.apply()
+                }
             },
             onMessage = ::onServerMessage,
             onStatus = { hud.state = hud.state.copy(status = it) },
