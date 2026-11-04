@@ -87,9 +87,9 @@ export function subwayProvider(key: string, base = "http://swopenapi.seoul.go.kr
           };
         });
       if (!result.length && debug) {
-        const err = text.trim().startsWith("{") ? JSON.stringify(JSON.parse(text).errorMessage ?? JSON.parse(text).RESULT ?? {}) : text.slice(0, 200);
+        const err = text.split(key).join("***").replace(/\s+/g, " ").slice(0, 300);
         debug(
-          `subway debug ${station}: rows=${rows.length} want lines=${r.lines.join("/")} next=${next ?? "-"} err=${err} sample=${JSON.stringify(
+          `subway debug ${station}: rows=${rows.length} want lines=${r.lines.join("/")} next=${next ?? "-"} head=${err} sample=${JSON.stringify(
             rows.slice(0, 4).map((x) => [x.subwayId, x.trainLineNm, x.arvlMsg2, x.barvlDt]),
           )}`,
         );
