@@ -245,7 +245,8 @@ class MainActivity : Activity() {
         when (input) {
             Input.NEXT -> { stopArmed = false; hud.menu = m.copy(selected = (m.selected + 1) % n, note = "") }
             Input.PREV -> { stopArmed = false; hud.menu = m.copy(selected = (m.selected - 1 + n) % n, note = "") }
-            Input.BACK -> hud.menu = null
+            // 메인 화면(메뉴)에서 뒤로 = 앱 종료 (길안내 화면 → 뒤로 → 메뉴 → 뒤로 → 종료)
+            Input.BACK -> finishAndRemoveTask()
             Input.SELECT -> select(Item.values()[m.selected], m)
         }
     }

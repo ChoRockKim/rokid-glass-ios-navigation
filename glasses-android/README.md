@@ -27,21 +27,21 @@ Kotlin 안드로이드 앱. 서버(`server/`)의 WebSocket `/glass?map=1` 에 �
 | ENTER, DPAD_CENTER, 미디어 재생/일시정지 (탭) | 다음 | 선택 |
 | DPAD_RIGHT/DOWN, 미디어 다음 | 다음 | 아래로 |
 | DPAD_LEFT/UP, 미디어 이전 | 이전 | 위로 |
-| BACK, ESC (더블탭) | 메뉴 열기 | 메뉴 닫기 |
+| BACK, ESC (더블탭) | 메뉴 열기 | 앱 종료 (목적지 선택 중이면 선택 취소) |
 
 `Rokid_Claude` 주석 기준 탭=ENTER, 쓸기=DPAD_LEFT/RIGHT. 어느 쓸기 방향이 앞인지는 실기에서 확인.
 
 ### R08 링 (R08 Access Bridge)
 소스(Anezium/R08-Access-Bridge)만 읽고 맞춘 것. 실기 미확인.
 - 링 앞/뒤 → 접근성 포커스 노드에 `ACTION_SCROLL_FORWARD/BACKWARD` → 다음/이전 (HudView 가 포커스·스크롤 가능 노드로 보인다)
-- 링 탭 → `ACTION_CLICK` → 선택, 더블탭 → 뒤로(`GLOBAL_ACTION_BACK`) → 메뉴
+- 링 탭 → `ACTION_CLICK` → 선택, 더블탭 → 뒤로(`GLOBAL_ACTION_BACK`) → 메뉴 (메뉴에서 한 번 더 = 앱 종료)
 - 스와이프 제스처로 떨어질 때는 세로 플링을 다음/이전으로, Stable 모드(미디어 키)는 위 표대로.
 
 ## 메뉴 · OTA 업데이트
 뒤로 가기 → 메뉴:
 | 항목 | 동작 |
 |---|---|
-| 길안내 화면으로 | 메뉴 닫기 |
+| 길안내 화면으로 | 메뉴 닫기 (메뉴에서 뒤로 = 앱 종료) |
 | 안내 종료 | 두 번 선택하면 서버 경로 종료 (WebSocket `{type:"stop"}`) |
 | 여기서 경로 다시 찾기 | 마지막 위치에서 같은 목적지로 (`{type:"reroute"}`). 도보는 도보, 대중교통은 가장 빠른 후보. 결과는 `{type:"notice"}` 로 이 안경에만 |
 | 방향 다시 맞추기 | 방향 센서 0° 보정 초기화 (지자기 있으면 바로, 없으면 걷기 시작할 때) |

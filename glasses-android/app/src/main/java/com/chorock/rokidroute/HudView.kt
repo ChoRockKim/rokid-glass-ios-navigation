@@ -91,7 +91,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         val note: String = "",
         /** 위 줄 (없으면 "길안내 · v버전") */
         val title: String? = null,
-        val hint: String = "쓸기 이동 · 탭 선택 · 뒤로 닫기",
+        val hint: String = "쓸기 이동 · 탭 선택 · 뒤로 앱 종료",
     )
     var menu: Menu? = null
         set(value) { field = value; invalidate() }
