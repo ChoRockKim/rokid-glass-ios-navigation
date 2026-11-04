@@ -6,7 +6,19 @@ import { dispatcher } from "./proxy.js";
 import { distanceM } from "./guide.js";
 import type { MapMessage, Navigator } from "./navigation.js";
 
-const ENDPOINT = process.env.OVERPASS_URL ?? "https://overpass-api.de/api/interpreter";
+// 공개 Overpass 인스턴스. 앞에서부터 시도하고, 성공한 곳을 다음에 먼저 쓴다.
+// (2026-11-04 Railway 에서 overpass-api.de 가 "fetch failed" — 원인 확인 중이라 예비를 둔다)
+const ENDPOINTS = (process.env.OVERPASS_URL ?? "https://overpass-api.de/api/interpreter,https://overpass.private.coffee/api/interpreter,https://maps.mail.ru/osm/tools/overpass/api/interpreter")
+  .split(",")
+  .map((x) => x.trim())
+  .filter(Boolean);
+
+/** undici 의 "fetch failed" 밑에 숨은 실제 원인 */
+function why(e: unknown): string {
+  if (!(e instanceof Error)) return String(e);
+  const c = (e as Error & { cause?: { code?: string; message?: string } }).cause;
+  return c ? `${e.message} (${c.code ?? ""} ${c.message ?? ""})`.trim() : e.message;
+}
 const RADIUS_M = 250;
 const REFETCH_M = 120;
 const MIN_INTERVAL_MS = 15_000;
@@ -58,6 +70,32 @@ export class RoadFeed {
     return this.latest;
   }
 
+  private preferred = 0;
+
+  private async query(q: string): Promise<unknown> {
+    const errors: string[] = [];
+    for (let k = 0; k < ENDPOINTS.length; k++) {
+      const i = (this.preferred + k) % ENDPOINTS.length;
+      const url = ENDPOINTS[i]!;
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          body: new URLSearchParams({ data: q }),
+          headers: { "user-agent": "rokid-route-server/0.1 (personal walking navigation prototype)" },
+          signal: AbortSignal.timeout(15_000),
+          dispatcher,
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = await res.json();
+        this.preferred = i;
+        return body;
+      } catch (e) {
+        errors.push(`${new URL(url).host}: ${why(e)}`);
+      }
+    }
+    throw new Error(errors.join(" | "));
+  }
+
   private async maybeFetch(lon: number, lat: number) {
     if (this.busy) return;
     if (this.center && distanceM(this.center, [lon, lat]) < REFETCH_M) return;
@@ -66,21 +104,13 @@ export class RoadFeed {
     this.lastTry = Date.now();
     const q = `[out:json][timeout:10];way(around:${RADIUS_M},${lat.toFixed(6)},${lon.toFixed(6)})[highway~"^(${KINDS})$"];out geom;`;
     try {
-      const res = await fetch(ENDPOINT, {
-        method: "POST",
-        body: new URLSearchParams({ data: q }),
-        headers: { "user-agent": "rokid-route-server/0.1 (personal walking navigation prototype)" },
-        signal: AbortSignal.timeout(15_000),
-        dispatcher,
-      });
-      if (!res.ok) throw new Error(`overpass ${res.status}`);
-      const roads = parseOverpass(await res.json());
+      const roads = parseOverpass(await this.query(q));
       this.center = [lon, lat];
       this.latest = roads;
-      this.log(`roads: ${roads.lines.length} ways around ${lat.toFixed(4)},${lon.toFixed(4)}`);
+      this.log(`roads: ${roads.lines.length} ways around ${lat.toFixed(4)},${lon.toFixed(4)} via ${new URL(ENDPOINTS[this.preferred]!).host}`);
       for (const fn of this.listeners) fn(roads);
     } catch (e) {
-      this.log(`roads 실패: ${e instanceof Error ? e.message : String(e)}`);
+      this.log(`roads 실패: ${why(e)}`);
     } finally {
       this.busy = false;
     }
