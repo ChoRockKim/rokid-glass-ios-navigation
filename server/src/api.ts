@@ -88,6 +88,8 @@ export function parsePositions(body: unknown): Position[] | null {
     return out;
   }
 
+  // OwnTracks 는 위치 외에 status, lwt, transition 등도 보낸다. 위치가 아니면 빈 목록 (200 으로 받아 줘야 재전송 안 함)
+  if (typeof b._type === "string" && b._type !== "location") return [];
   const lat = num(b.lat ?? b.latitude);
   const lon = num(b.lon ?? b.lng ?? b.longitude);
   if (lat === undefined || lon === undefined) return null;
@@ -166,8 +168,9 @@ export function createApi(deps: ApiDeps) {
           log(`location x${positions.length} ${r.accepted ? `s=${r.progress?.toFixed(0)} off=${r.offset?.toFixed(0)}m step=${(r.index ?? 0) + 1}${r.offRoute ? " OFF" : ""}` : r.reason}`);
         }
         void maybeReroute(r.offRouteCount);
-        // Overland 는 {"result":"ok"} 를 받아야 보낸 점을 큐에서 지운다
-        send(res, 200, { result: "ok", ...r });
+        // OwnTracks 는 응답으로 JSON 배열(보낼 명령 목록)을 기대한다. Overland 는 {"result":"ok"} 가 필요
+        if (typeof (body as Record<string, unknown>)._type === "string") send(res, 200, []);
+        else send(res, 200, { result: "ok", ...r });
         return true;
       }
 

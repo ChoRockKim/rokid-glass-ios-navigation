@@ -104,5 +104,6 @@ test("parsePositions: Overland / 단순 / OwnTracks", () => {
   assert.equal(owntracks[0]!.ts, 1_700_000_000_000);
 
   assert.equal(parsePositions({ foo: 1 }), null);
+  assert.deepEqual(parsePositions({ _type: "status", iOS: {} }), []); // OwnTracks 상태 메시지
   assert.deepEqual(parsePositions({ locations: [] }), []);
 });
