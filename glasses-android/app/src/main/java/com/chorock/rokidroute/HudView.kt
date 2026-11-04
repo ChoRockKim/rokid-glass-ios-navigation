@@ -24,11 +24,55 @@ import kotlin.math.sin
  * - 미니맵: 나는 (240, 205), 1m = 0.75dp. [headingProvider] 가 방위를 주면 그 방향이 위, 아니면 경로 진행 방향이 위.
  */
 class HudView(context: Context, private val headingProvider: () -> Float?) : View(context) {
+    /**
+     * R08 링(R08 Access Bridge) 지원.
+     * 브리지는 접근성 서비스로 ① 포커스 후보 사이 이동 → ② 포커스된 요소 스크롤 → ③ 위아래 스와이프 주입 순으로 링 앞/뒤를 처리하고,
+     * 탭은 포커스된 요소 클릭, 더블탭은 뒤로가기다 (Anezium/R08-Access-Bridge AccessibilityNavigator.java).
+     * 그래서 이 뷰를 "포커스·클릭·앞뒤 스크롤 가능한 요소 하나"로 알리고, 스크롤 앞/뒤 = 다음/이전, 클릭 = 선택, 스와이프도 같은 뜻으로 받는다.
+     */
+    var onInput: ((MainActivity.Input) -> Unit)? = null
+
+    private val swipe = android.view.GestureDetector(context, object : android.view.GestureDetector.SimpleOnGestureListener() {
+        override fun onDown(e: android.view.MotionEvent) = true
+        override fun onFling(e1: android.view.MotionEvent?, e2: android.view.MotionEvent, vx: Float, vy: Float): Boolean {
+            if (abs(vy) < abs(vx)) return false
+            onInput?.invoke(if (vy < 0) MainActivity.Input.NEXT else MainActivity.Input.PREV) // 위로 쓸기 = 앞으로
+            return true
+        }
+        override fun onSingleTapUp(e: android.view.MotionEvent): Boolean { performClick(); return true }
+    })
+
+    init {
+        isFocusable = true
+        isFocusableInTouchMode = true
+        isClickable = true
+        importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
+        contentDescription = "길안내"
+        setOnClickListener { onInput?.invoke(MainActivity.Input.SELECT) }
+    }
+
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: android.view.MotionEvent): Boolean = swipe.onTouchEvent(event) || super.onTouchEvent(event)
+
+    override fun onInitializeAccessibilityNodeInfo(info: android.view.accessibility.AccessibilityNodeInfo) {
+        super.onInitializeAccessibilityNodeInfo(info)
+        info.isScrollable = true
+        info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
+        info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD)
+    }
+
+    override fun performAccessibilityAction(action: Int, arguments: android.os.Bundle?): Boolean = when (action) {
+        android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> { onInput?.invoke(MainActivity.Input.NEXT); true }
+        android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> { onInput?.invoke(MainActivity.Input.PREV); true }
+        else -> super.performAccessibilityAction(action, arguments)
+    }
+
     var state = HudState()
         set(value) {
             val old = field.pos
             field = value
             if (value.pos != null && value.pos != old) startGlide(old, value.pos)
+            contentDescription = value.line1.ifEmpty { "길안내" }
             invalidate()
         }
 
@@ -38,6 +82,11 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     /** 오른쪽 아래 기기 상태: 배터리 %(null 이면 모름), 충전 중, 네트워크 이름, 서버 연결 */
     data class Device(val battery: Int? = null, val charging: Boolean = false, val network: String = "", val server: Boolean = false)
     var device = Device()
+        set(value) { field = value; invalidate() }
+
+    /** 메인 화면(메뉴). null 이면 길안내 화면 */
+    data class Menu(val items: List<String>, val selected: Int = 0, val note: String = "")
+    var menu: Menu? = null
         set(value) { field = value; invalidate() }
 
     /** 실기 확인용 한 줄 (왼쪽 아래) */
@@ -129,6 +178,12 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         canvas.scale(k, k)
         canvas.drawRoundRect(RectF(0.5f, 0.5f, W - 0.5f, H - 0.5f), 12f, 12f, border)
 
+        menu?.let { m ->
+            drawMenu(canvas, m)
+            canvas.restore()
+            return
+        }
+
         val pos = shownPos()
         val sensor = headingProvider()
         if (pos != null && pairCode == null) drawMap(canvas, pos, sensor ?: pos.heading, sensor != null)
@@ -158,6 +213,22 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
 
         // 위치가 미끄러지는 중이거나 센서 방향을 쓰면 계속 다시 그림
         if (glideFrom != null || (sensor != null && pos != null)) postInvalidateOnAnimation()
+    }
+
+    /** 메인 화면: 제목·버전, 항목(선택된 것만 밝게, ▶ 표시), 아래 안내 문구 */
+    private fun drawMenu(canvas: Canvas, m: Menu) {
+        canvas.drawText("길안내 · v${BuildConfig.VERSION_NAME}", 18f, 14f + 13f, small)
+        var y = 14f + 18f + 22f + 8f
+        m.items.forEachIndexed { i, item ->
+            val sel = i == m.selected
+            big.color = if (sel) green else dim
+            canvas.drawText((if (sel) "▶ " else "   ") + item, 18f, y, big)
+            y += 38f
+        }
+        if (m.note.isNotEmpty()) drawWrapped(canvas, m.note, mid.apply { color = green }, y - 12f, 2)
+        val bottom = H - 10f
+        canvas.drawText("쓸기 이동 · 탭 선택 · 뒤로 닫기", 18f, bottom, tiny)
+        drawDeviceStatus(canvas, bottom, "")
     }
 
     /** 오른쪽 아래: [연결 오류 문구]  Wi-Fi ●  ▭82% (오른쪽에서 왼쪽으로 쌓는다) */

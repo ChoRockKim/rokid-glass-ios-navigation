@@ -30,6 +30,29 @@ class HudViewSnapshotTest {
         JSONObject(javaClass.classLoader!!.getResource("flow.json")!!.readText())
 
     @Test
+    fun menu() {
+        val v = HudView(paparazzi.context) { null }
+        v.device = HudView.Device(battery = 64, network = "Wi-Fi", server = true)
+        v.menu = HudView.Menu(listOf("길안내 화면으로", "업데이트 확인", "앱 종료"), selected = 1, note = "새 버전 0.3.1 · 탭하면 설치")
+        paparazzi.snapshot(v, "09_menu")
+    }
+
+    /** R08 Access Bridge 용: 클릭·포커스 가능, 접근성 스크롤 앞/뒤·클릭이 다음·이전·선택으로 */
+    @Test
+    fun r08RingAccessibility() {
+        val v = HudView(paparazzi.context) { null }
+        val got = mutableListOf<MainActivity.Input>()
+        v.onInput = { got += it }
+        // layoutlib 은 AccessibilityNodeInfo 가 스텁이라 노드 속성은 실기에서만 확인 가능. 여기서는 뷰 속성과 동작 전달만 본다
+        org.junit.Assert.assertTrue(v.isClickable)
+        org.junit.Assert.assertTrue(v.isFocusable)
+        v.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD, null)
+        v.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD, null)
+        v.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK, null)
+        org.junit.Assert.assertEquals(listOf(MainActivity.Input.NEXT, MainActivity.Input.PREV, MainActivity.Input.SELECT), got)
+    }
+
+    @Test
     fun pairing() {
         val v = HudView(paparazzi.context) { null }
         v.pairCode = "6567"

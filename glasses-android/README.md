@@ -22,14 +22,27 @@ Kotlin 안드로이드 앱. 서버(`server/`)의 WebSocket `/glass?map=1` 에 �
    서버 `GLASS_TOKEN` 을 바꾸면 401 → 자동으로 다시 페어링.
 
 ## 입력 (실기 미확인)
-| 키 | 동작 |
-|---|---|
-| ENTER, DPAD_CENTER (탭) | 다음 |
-| DPAD_RIGHT, DPAD_DOWN | 다음 |
-| DPAD_LEFT, DPAD_UP | 이전 |
-| BACK (더블탭) | 앱 기본 동작 |
+| 입력 | 길안내 화면 | 메뉴 |
+|---|---|---|
+| ENTER, DPAD_CENTER, 미디어 재생/일시정지 (탭) | 다음 | 선택 |
+| DPAD_RIGHT/DOWN, 미디어 다음 | 다음 | 아래로 |
+| DPAD_LEFT/UP, 미디어 이전 | 이전 | 위로 |
+| BACK, ESC (더블탭) | 메뉴 열기 | 메뉴 닫기 |
 
 `Rokid_Claude` 주석 기준 탭=ENTER, 쓸기=DPAD_LEFT/RIGHT. 어느 쓸기 방향이 앞인지는 실기에서 확인.
+
+### R08 링 (R08 Access Bridge)
+소스(Anezium/R08-Access-Bridge)만 읽고 맞춘 것. 실기 미확인.
+- 링 앞/뒤 → 접근성 포커스 노드에 `ACTION_SCROLL_FORWARD/BACKWARD` → 다음/이전 (HudView 가 포커스·스크롤 가능 노드로 보인다)
+- 링 탭 → `ACTION_CLICK` → 선택, 더블탭 → 뒤로(`GLOBAL_ACTION_BACK`) → 메뉴
+- 스와이프 제스처로 떨어질 때는 세로 플링을 다음/이전으로, Stable 모드(미디어 키)는 위 표대로.
+
+## 메뉴 · OTA 업데이트
+뒤로 가기 → 메뉴: `길안내 화면으로` / `업데이트 확인` / `앱 종료`.
+`업데이트 확인` → 서버 `GET /app/latest` → 새 버전이면 한 번 더 선택 → 다운로드 · sha256 확인 → 안드로이드 설치 창.
+- 처음 한 번은 "이 출처 허용" 설정 화면으로 간다. 허용 후 다시 선택.
+- 같은 키로 서명된 APK 만 덮어 설치된다 → 릴리스는 고정 키로: `scripts/release.sh <versionCode> <versionName> [--upload]` (필요한 환경 변수는 스크립트 머리말). 키·토큰은 저장소에 넣지 않는다.
+- 디버그 서명 앱에서 넘어갈 때는 한 번 지우고 릴리스 APK 를 설치.
 
 ## 방향 (미니맵 회전)
 - `TYPE_ROTATION_VECTOR`(지자기 포함)가 있으면 북 기준 방위 → **보고 있는 방향이 위**.

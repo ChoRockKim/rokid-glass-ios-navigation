@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- OTA 로 받은 APK (cacheDir/updates/update.apk) 를 설치 창에 넘길 때 -->
+    <cache-path name="updates" path="updates/" />
+</paths>

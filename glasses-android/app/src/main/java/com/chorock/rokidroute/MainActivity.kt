@@ -22,6 +22,7 @@ class MainActivity : Activity() {
     private lateinit var hud: HudView
     private lateinit var client: ServerClient
     private lateinit var heading: HeadingProvider
+    private lateinit var updater: Updater
     private var lastCalib: MapPos? = null
 
     private fun distM(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
@@ -39,6 +40,7 @@ class MainActivity : Activity() {
 
         heading = HeadingProvider(this)
         hud = HudView(this) { heading.heading() }
+        hud.onInput = ::handle
         // 화면 전체는 검정(= 안경에서 투명), 안내는 480x282 dp 를 아래 가운데에
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         root.addView(hud, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
@@ -67,6 +69,9 @@ class MainActivity : Activity() {
             },
             onPairCode = { hud.pairCode = it },
         )
+        updater = Updater(this, BuildConfig.SERVER_BASE, token = { prefs.getString("glassToken", null) ?: BuildConfig.DEVICE_TOKEN.takeIf { it.isNotEmpty() } }) { note ->
+            hud.menu = hud.menu?.copy(note = note)
+        }
         val dm = resources.displayMetrics
         val screen = "${dm.widthPixels}x${dm.heightPixels} d${dm.density}"
         Log.i("Route", "server=${BuildConfig.SERVER_BASE} heading=${heading.mode} screen=$screen")
@@ -110,6 +115,8 @@ class MainActivity : Activity() {
         updateNetwork()
         heading.start()
         client.start()
+        // R08 브리지가 처음 링 조작부터 이 화면을 "현재 포커스"로 보도록 미리 포커스를 잡는다
+        hud.requestFocus()
     }
 
     override fun onPause() {
@@ -137,13 +144,47 @@ class MainActivity : Activity() {
         hud.state = next
     }
 
+    /** 안경 터치·R08 링 등 모든 입력을 이 네 동작으로 바꿔서 처리한다 */
+    enum class Input { NEXT, PREV, SELECT, BACK }
+
+    private val menuItems = listOf("길안내 화면으로", "업데이트 확인", "앱 종료")
+
+    fun handle(input: Input) {
+        val m = hud.menu
+        if (m == null) {
+            // 길안내 화면: 탭·앞으로 = 다음 단계, 뒤로 쓸기 = 이전, 뒤로가기 = 메인 화면
+            when (input) {
+                Input.SELECT, Input.NEXT -> client.send(JSONObject().put("type", "next"))
+                Input.PREV -> client.send(JSONObject().put("type", "prev"))
+                Input.BACK -> hud.menu = HudView.Menu(menuItems)
+            }
+            return
+        }
+        when (input) {
+            Input.NEXT -> hud.menu = m.copy(selected = (m.selected + 1) % m.items.size)
+            Input.PREV -> hud.menu = m.copy(selected = (m.selected - 1 + m.items.size) % m.items.size)
+            Input.BACK -> hud.menu = null
+            Input.SELECT -> when (m.selected) {
+                0 -> hud.menu = null
+                1 -> if (updater.available != null) updater.install() else updater.check()
+                2 -> finishAndRemoveTask()
+            }
+        }
+    }
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        val action = when (keyCode) {
-            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_DOWN -> "next"
-            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_UP -> "prev"
+        val input = when (keyCode) {
+            KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_DPAD_CENTER -> Input.SELECT
+            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_DOWN -> Input.NEXT
+            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_UP -> Input.PREV
+            KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> Input.BACK
+            // R08 링이 미디어 키 모드(Stable, appType 1)로 브리지 없이 바로 들어올 때
+            KeyEvent.KEYCODE_MEDIA_NEXT -> Input.NEXT
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> Input.PREV
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_HEADSETHOOK -> Input.SELECT
             else -> null
         } ?: return super.onKeyDown(keyCode, event)
-        client.send(JSONObject().put("type", action))
+        handle(input)
         return true
     }
 }

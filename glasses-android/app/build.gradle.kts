@@ -11,6 +11,11 @@ val serverBase = (project.findProperty("ROUTE_SERVER") as String?) ?: "https://r
 //   ./gradlew assembleDebug -PDEVICE_TOKEN=…   (없으면 빈 값 → 페어링으로 연결)
 val deviceToken = (project.findProperty("DEVICE_TOKEN") as String?) ?: ""
 
+// 고정 릴리스 서명 키 (OTA 업데이트는 같은 키로 서명돼야 설치된다). 저장소에 넣지 않고 빌드 때만 준다:
+//   ./gradlew assembleRelease -PRELEASE_KEYSTORE=/path/release.keystore -PRELEASE_KEYSTORE_PASS=…
+val releaseKeystore = project.findProperty("RELEASE_KEYSTORE") as String?
+val releaseKeystorePass = project.findProperty("RELEASE_KEYSTORE_PASS") as String?
+
 android {
     namespace = "com.chorock.rokidroute"
     compileSdk = 34
@@ -19,13 +24,30 @@ android {
         applicationId = "com.chorock.rokidroute"
         minSdk = 28
         targetSdk = 34
-        versionCode = 8
-        versionName = "0.2.5"
+        versionCode = ((project.findProperty("VERSION_CODE") as String?)?.toInt() ?: 9)
+        versionName = (project.findProperty("VERSION_NAME") as String?) ?: "0.3.0"
         buildConfigField("String", "SERVER_BASE", "\"$serverBase\"")
         buildConfigField("String", "DEVICE_TOKEN", "\"$deviceToken\"")
     }
 
     buildFeatures { buildConfig = true }
+
+    signingConfigs {
+        if (releaseKeystore != null && releaseKeystorePass != null) {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = releaseKeystorePass
+                keyAlias = "rokidroute"
+                keyPassword = releaseKeystorePass
+            }
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
+        }
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -36,6 +58,7 @@ android {
 
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.core:core:1.12.0") // FileProvider (OTA 설치)
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }
