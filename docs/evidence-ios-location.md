@@ -90,3 +90,9 @@ owntracks.org, overland.p3k.app 은 이 클라우드 세션에서 접속이 막�
 - 연속 위치: Overland(전송 1~5s, 정확도 best) 또는 OwnTracks Move(mindist 10, mintime 30). 둘 다 실측 필요.
 - 단축어: 연속 추적 대신 "지금 위치로 맞추기" 수동 버튼으로 쓰는 게 맞다.
 - 어느 쪽이든 폰이 서버에 닿아야 하므로 서버 공개 주소(배포)가 먼저 필요하다.
+
+## 8) Overland 실기 연결 (2026-11-04)
+- 사용자 iPhone(iOS 27.0.1)의 App Store 판 **Overland 1.3** 이 `POST /location` 으로 전송 → 서버 200, Overland 형식 파싱 성공 (Railway 로그, User-Agent `Overland/1.3`).
+- 설정 화면은 상단 **SLIDE TO UNLOCK** 슬라이더를 끝까지 밀어야 바뀐다 (`SettingsViewController.m` `settingsLockSliderWasChanged`, 95 이상에서 unlock). 잠긴 상태에서는 Server URL, Request Permission 도 비활성.
+- 7절에서 본 단축어 동작(App Intents)은 GitHub 소스 1.4 기준이다. 사용자 앱이 1.3 이라 단축어 동작이 없었던 것으로 보인다 (추정).
+- 걸으면서 자동 진행·전송 간격 실측은 아직.
