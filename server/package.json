@@ -14,7 +14,9 @@
     "test": "node --import tsx --test src/*.test.ts"
   },
   "dependencies": {
+    "@mapbox/vector-tile": "^3.0.0",
     "@slack/bolt": "^5.1.0",
+    "pbf": "^5.1.2",
     "undici": "^8.12.3",
     "ws": "^8.22.1"
   },

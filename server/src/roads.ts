@@ -1,10 +1,49 @@
 // 미니맵 배경용 주변 도로 (OpenStreetMap, Overpass API). 데이터 © OpenStreetMap contributors (ODbL).
 // 내 위치 반경 RADIUS_M 안의 도로 선만 가져온다. 위치가 REFETCH_M 이상 움직였을 때만 다시 가져온다.
-// ⚠ 클라우드 개발 세션에서는 overpass-api.de 연결이 끊겨 직접 확인하지 못했다. 실패해도 경로 미니맵은 그대로 나온다.
+// 실패해도 경로 미니맵은 그대로 나온다. (개발 세션에서는 두 출처 모두 접속 불가라 Railway 로그로 확인)
 import { fetch } from "undici";
 import { dispatcher } from "./proxy.js";
 import { distanceM } from "./guide.js";
 import type { MapMessage, Navigator } from "./navigation.js";
+import { VectorTile } from "@mapbox/vector-tile";
+import { PbfReader } from "pbf";
+
+// 1순위: OpenFreeMap 벡터 타일 (OpenMapTiles 스키마, CDN 정적 파일, 키 없음). transportation 레이어만 쓴다.
+// 2순위: Overpass (공개 서버가 자주 502/504 — 2026-11-04 Railway 에서 세 곳 모두 실패 확인)
+const TILEJSON = process.env.OFM_TILEJSON ?? "https://tiles.openfreemap.org/planet";
+const TILE_Z = 14; // OpenMapTiles 최대 줌
+const OMT_MAJOR = new Set(["motorway", "trunk", "primary", "secondary", "tertiary"]);
+const UA = "rokid-route-server/0.1 (personal walking navigation prototype)";
+
+function tileXY(lon: number, lat: number, z: number): [number, number] {
+  const n = 2 ** z;
+  const x = Math.floor(((lon + 180) / 360) * n);
+  const r = (lat * Math.PI) / 180;
+  const y = Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * n);
+  return [x, y];
+}
+
+/** 벡터 타일(pbf)에서 도로 선만 뽑는다. bbox 밖 선은 버린다 */
+export function roadsFromTile(buf: Uint8Array, x: number, y: number, z: number, bbox: [number, number, number, number]): { lines: [number, number][][]; major: boolean[] } {
+  const tile = new VectorTile(new PbfReader(buf));
+  const layer = tile.layers["transportation"];
+  const lines: [number, number][][] = [];
+  const major: boolean[] = [];
+  if (!layer) return { lines, major };
+  const [w, s, e, n] = bbox;
+  for (let i = 0; i < layer.length; i++) {
+    const f = layer.feature(i);
+    if (f.type !== 2) continue; // LineString
+    const gj = f.toGeoJSON(x, y, z) as { geometry: { type: string; coordinates: unknown } };
+    const parts = (gj.geometry.type === "MultiLineString" ? gj.geometry.coordinates : [gj.geometry.coordinates]) as [number, number][][];
+    for (const part of parts) {
+      if (!part.some(([lo, la]) => lo >= w && lo <= e && la >= s && la <= n)) continue;
+      lines.push(part.map(([lo, la]) => [Math.round(lo * 1e6) / 1e6, Math.round(la * 1e6) / 1e6]));
+      major.push(OMT_MAJOR.has(String(f.properties["class"] ?? "")));
+    }
+  }
+  return { lines, major };
+}
 
 // 공개 Overpass 인스턴스. 앞에서부터 시도하고, 성공한 곳을 다음에 먼저 쓴다.
 // (2026-11-04 Railway 에서 overpass-api.de 가 "fetch failed" — 원인 확인 중이라 예비를 둔다)
@@ -71,6 +110,37 @@ export class RoadFeed {
   }
 
   private preferred = 0;
+  private tileTemplate: string | null = null;
+
+  private async getBytes(url: string): Promise<Uint8Array> {
+    const res = await fetch(url, { headers: { "user-agent": UA }, signal: AbortSignal.timeout(10_000), dispatcher });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return new Uint8Array(await res.arrayBuffer());
+  }
+
+  /** 내 위치 ±RADIUS 상자를 덮는 z14 타일(보통 1장, 경계면 2~4장)에서 도로를 모은다 */
+  private async fromTiles(lon: number, lat: number): Promise<Roads> {
+    if (!this.tileTemplate) {
+      const tj = JSON.parse(new TextDecoder().decode(await this.getBytes(TILEJSON))) as { tiles?: string[] };
+      if (!tj.tiles?.[0]) throw new Error("tilejson 에 tiles 없음");
+      this.tileTemplate = tj.tiles[0];
+    }
+    const dLat = RADIUS_M / 110_540;
+    const dLon = RADIUS_M / (111_320 * Math.cos((lat * Math.PI) / 180));
+    const bbox: [number, number, number, number] = [lon - dLon, lat - dLat, lon + dLon, lat + dLat];
+    const [x0, y0] = tileXY(bbox[0], bbox[3], TILE_Z);
+    const [x1, y1] = tileXY(bbox[2], bbox[1], TILE_Z);
+    const out: Roads = { type: "map-roads", lines: [], major: [] };
+    for (let x = x0; x <= x1; x++) {
+      for (let y = y0; y <= y1; y++) {
+        const url = this.tileTemplate.replace("{z}", String(TILE_Z)).replace("{x}", String(x)).replace("{y}", String(y));
+        const r = roadsFromTile(await this.getBytes(url), x, y, TILE_Z, bbox);
+        out.lines.push(...r.lines);
+        out.major.push(...r.major);
+      }
+    }
+    return out;
+  }
 
   private async query(q: string): Promise<unknown> {
     const errors: string[] = [];
@@ -102,12 +172,21 @@ export class RoadFeed {
     if (Date.now() - this.lastTry < MIN_INTERVAL_MS) return;
     this.busy = true;
     this.lastTry = Date.now();
-    const q = `[out:json][timeout:10];way(around:${RADIUS_M},${lat.toFixed(6)},${lon.toFixed(6)})[highway~"^(${KINDS})$"];out geom;`;
+    const q = `[out:json][timeout:20];way(around:${RADIUS_M},${lat.toFixed(6)},${lon.toFixed(6)})[highway~"^(${KINDS})$"];out geom;`;
     try {
-      const roads = parseOverpass(await this.query(q));
+      let roads: Roads;
+      let via = "openfreemap";
+      try {
+        roads = await this.fromTiles(lon, lat);
+      } catch (e) {
+        this.tileTemplate = null;
+        this.log(`roads 타일 실패, Overpass 로: ${why(e)}`);
+        roads = parseOverpass(await this.query(q));
+        via = new URL(ENDPOINTS[this.preferred]!).host;
+      }
       this.center = [lon, lat];
       this.latest = roads;
-      this.log(`roads: ${roads.lines.length} ways around ${lat.toFixed(4)},${lon.toFixed(4)} via ${new URL(ENDPOINTS[this.preferred]!).host}`);
+      this.log(`roads: ${roads.lines.length} lines around ${lat.toFixed(4)},${lon.toFixed(4)} via ${via}`);
       for (const fn of this.listeners) fn(roads);
     } catch (e) {
       this.log(`roads 실패: ${why(e)}`);
