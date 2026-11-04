@@ -54,7 +54,10 @@ const SUBWAY_IDS: Record<string, string> = {
   "1075": "수인분당선", "1077": "신분당선", "1092": "우이신설선", "1093": "서해선", "1081": "경강선", "1032": "GTX-A",
 };
 
-export function subwayProvider(key: string, base = "http://swopenapi.seoul.go.kr"): ArrivalProvider {
+/** 결과가 비었을 때 원인을 볼 수 있게 응답 요약을 남긴다 (키는 URL 에만 있고 로그에 안 남긴다) */
+type DebugLog = (m: string) => void;
+
+export function subwayProvider(key: string, base = "http://swopenapi.seoul.go.kr", debug?: DebugLog): ArrivalProvider {
   return {
     name: "seoul-subway",
     supports: (r) => r.kind === "subway",
@@ -65,7 +68,7 @@ export function subwayProvider(key: string, base = "http://swopenapi.seoul.go.kr
         ? ((JSON.parse(text).realtimeArrivalList ?? []) as Record<string, string>[])
         : xmlItems(text, "row");
       const next = r.stops[1] ? stationName(r.stops[1]) : null;
-      return rows
+      const result = rows
         .filter((x) => {
           const line = SUBWAY_IDS[String(x.subwayId)] ?? "";
           const lineOk = !r.lines.length || r.lines.some((l) => line && l.includes(line.replace("선", "")));
@@ -83,6 +86,15 @@ export function subwayProvider(key: string, base = "http://swopenapi.seoul.go.kr
             direction: String(x.trainLineNm ?? ""),
           };
         });
+      if (!result.length && debug) {
+        const err = text.trim().startsWith("{") ? JSON.stringify(JSON.parse(text).errorMessage ?? JSON.parse(text).RESULT ?? {}) : text.slice(0, 200);
+        debug(
+          `subway debug ${station}: rows=${rows.length} want lines=${r.lines.join("/")} next=${next ?? "-"} err=${err} sample=${JSON.stringify(
+            rows.slice(0, 4).map((x) => [x.subwayId, x.trainLineNm, x.arvlMsg2, x.barvlDt]),
+          )}`,
+        );
+      }
+      return result;
     },
   };
 }
@@ -90,15 +102,16 @@ export function subwayProvider(key: string, base = "http://swopenapi.seoul.go.kr
 // ── 서울 버스 도착 (공공데이터포털 서울특별시 정류소정보·버스도착정보) ──
 // 공개 자료 기준: stationinfo/getStationByPos(tmX=경도,tmY=위도,radius) → arsId, stationNm
 //                 stationinfo/getStationByUid(arsId) → rtNm, arrmsg1, arrmsg2
-export function seoulBusProvider(key: string, base = "http://ws.bus.go.kr/api/rest"): ArrivalProvider {
+export function seoulBusProvider(key: string, base = "http://ws.bus.go.kr/api/rest", debug?: DebugLog): ArrivalProvider {
   const arsCache = new Map<string, string>(); // "lon,lat" → arsId
 
   async function items(path: string, params: Record<string, string>) {
     const q = new URLSearchParams({ ...params, resultType: "json" });
     // data.go.kr 키는 이미 인코딩된 형태로 줄 때가 있어 serviceKey 는 그대로 붙인다
     const text = await getText(`${base}/${path}?serviceKey=${key}&${q}`);
-    if (text.trim().startsWith("{")) return (JSON.parse(text).msgBody?.itemList ?? []) as Record<string, string>[];
-    return xmlItems(text, "itemList");
+    const list = text.trim().startsWith("{") ? ((JSON.parse(text).msgBody?.itemList ?? []) as Record<string, string>[]) : xmlItems(text, "itemList");
+    if (!list.length) debug?.(`bus debug ${path}: empty, head=${text.replace(/serviceKey=[^&"<]+/g, "serviceKey=***").slice(0, 300)}`);
+    return list;
   }
 
   async function arsIdFor(r: RideInfo): Promise<string | null> {
@@ -171,9 +184,9 @@ export function startRealtimePoller(nav: Navigator, providers: ArrivalProvider[]
   return () => clearInterval(timer);
 }
 
-export function providersFromEnv(): ArrivalProvider[] {
+export function providersFromEnv(debug?: DebugLog): ArrivalProvider[] {
   const out: ArrivalProvider[] = [];
-  if (process.env.SEOUL_SUBWAY_KEY) out.push(subwayProvider(process.env.SEOUL_SUBWAY_KEY));
-  if (process.env.DATA_GO_KR_KEY) out.push(seoulBusProvider(process.env.DATA_GO_KR_KEY));
+  if (process.env.SEOUL_SUBWAY_KEY) out.push(subwayProvider(process.env.SEOUL_SUBWAY_KEY, undefined, debug));
+  if (process.env.DATA_GO_KR_KEY) out.push(seoulBusProvider(process.env.DATA_GO_KR_KEY, undefined, debug));
   return out;
 }

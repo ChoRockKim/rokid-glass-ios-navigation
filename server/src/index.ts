@@ -193,7 +193,7 @@ const api = API_TOKEN
 if (!api) log("API_TOKEN 이 없어 폰용 HTTP API(/location, /route, /nav, /status)를 끕니다");
 
 const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, nav, log, api });
-const stopPoller = startRealtimePoller(nav, providersFromEnv(), log);
+const stopPoller = startRealtimePoller(nav, providersFromEnv(log), log);
 await app.start();
 log("slack socket mode connected");
 
