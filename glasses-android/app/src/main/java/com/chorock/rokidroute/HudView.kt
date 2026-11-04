@@ -20,7 +20,7 @@ import kotlin.math.sin
 /**
  * 안경 화면. 480x282 논리 단위로 그리고, 실제 화면에 비율을 유지한 채 가장 크게 들어가도록 줄인다.
  * (0.2.0 까지는 480x282 dp 로 고정해 밀도>1 인 안경에서 화면 밖으로 넘쳤다. 다른 Rokid 앱들은 화면을 480x640 px 로 가정)
- * - 배경은 칠하지 않는다 (투과형 안경에서 검정 = 안 보임). 얇은 테두리만.
+ * - 배경은 칠하지 않는다 (투과형 안경에서 검정 = 안 보임). 바깥 테두리도 없음 (0.3.11 부터).
  * - 미니맵: 나는 (240, 205), 1m = 0.75dp. [headingProvider] 가 방위를 주면 그 방향이 위, 아니면 경로 진행 방향이 위.
  */
 class HudView(context: Context, private val headingProvider: () -> Float?) : View(context) {
@@ -142,7 +142,6 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     private val dim = Color.parseColor("#4da86c")
     private val road = Color.parseColor("#2b7a45")
 
-    private val border = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f; color = dim }
     private val small = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = dim; textSize = 13f; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
     private val tiny = TextPaint(small).apply { textSize = 12f }
     private val big = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = green; textSize = 22f; typeface = Typeface.DEFAULT_BOLD; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
@@ -253,7 +252,6 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     override fun onDraw(canvas: Canvas) {
         canvas.save()
         canvas.scale(k, k)
-        canvas.drawRoundRect(RectF(0.5f, 0.5f, W - 0.5f, H - 0.5f), 12f, 12f, border)
 
         menu?.let { m ->
             drawMenu(canvas, m)
