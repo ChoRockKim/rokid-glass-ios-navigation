@@ -151,7 +151,7 @@ function rideView(a: ActiveRoute, step: GuideStep, now: number) {
 }
 
 export function messageFor(active: ActiveRoute | null, now = Date.now()): GlassMessage {
-  if (!active) return { type: "idle", text: "경로 없음 · Slack에서 /route" };
+  if (!active) return { type: "idle", text: "경로 없음" };
   const { guide, index, to } = active;
   const step = guide[index];
   if (!step) return { type: "arrived", destination: to.name, text: `도착: ${to.name}` };

@@ -71,7 +71,7 @@ API_TOKEN=... npx tsx scripts/simulate-walk.ts 37.5962 127.0633 왕십리역 20 
   {"type":"step","index":1,"total":14,"turn":"left","line1":"← 외국어대교차로에서 좌회전","line2":"회기역앞교차로까지 662m · 이문로",
    "text":"← 외국어대교차로에서 좌회전 · 회기역앞교차로까지 662m · 이문로","distance":795,"remaining":662,"offRoute":false,"destination":"왕십리역 2호선"}
   {"type":"arrived","destination":"선릉역","text":"도착: 선릉역"}
-  {"type":"idle","text":"경로 없음 · Slack에서 /route"}
+  {"type":"idle","text":"경로 없음"}
   ```
 - 안경 → 서버: `{"type":"next"}`, `{"type":"prev"}`, `{"type":"sync"}`
 - 헬스 체크: `GET /healthz`
