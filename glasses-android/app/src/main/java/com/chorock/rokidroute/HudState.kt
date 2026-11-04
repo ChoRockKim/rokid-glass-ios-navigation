@@ -36,6 +36,8 @@ data class HudState(
     val stepAt: Long = 0,
     /** 연결이 끊겨 안경 혼자 단계를 넘겨 보는 중 */
     val offlinePreview: Boolean = false,
+    /** 앱을 다시 켜며 캐시에서 되살린 화면이면 그 저장 시각 (서버에서 새로 받으면 null) */
+    val cachedAt: Long? = null,
 ) {
     /** 대기 중인 탑승: [버스]/[지하철], 도착 (노선, 남은 초 또는 null, 원문) */
     data class Waiting(val icon: String, val arrivals: List<Triple<String, Int?, String>>)
@@ -77,9 +79,10 @@ data class HudState(
             },
             stepAt = now,
             offlinePreview = false,
+            cachedAt = null,
         )
-        "arrived" -> copy(line1 = "도착", line2 = m.optString("destination"), progress = "", destination = "", warn = false, idle = false, etaAt = null, remaining = null, riding = false, stop = null, index = null, total = null, waiting = null, offlinePreview = false)
-        "idle" -> copy(line1 = m.optString("text", "경로 없음"), line2 = "폰에서 길안내를 시작하세요", progress = "", destination = "", warn = false, idle = true, route = null, pos = null, etaAt = null, remaining = null, riding = false, stop = null, index = null, total = null, steps = emptyList(), waiting = null, offlinePreview = false)
+        "arrived" -> copy(line1 = "도착", line2 = m.optString("destination"), progress = "", destination = "", warn = false, idle = false, etaAt = null, remaining = null, riding = false, stop = null, index = null, total = null, waiting = null, offlinePreview = false, cachedAt = null)
+        "idle" -> copy(line1 = m.optString("text", "경로 없음"), line2 = "폰에서 길안내를 시작하세요", progress = "", destination = "", warn = false, idle = true, route = null, pos = null, etaAt = null, remaining = null, riding = false, stop = null, index = null, total = null, steps = emptyList(), waiting = null, offlinePreview = false, cachedAt = null)
         "map-route" -> {
             val segs = m.getJSONArray("segments")
             copy(route = MapRoute(

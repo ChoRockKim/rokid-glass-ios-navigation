@@ -286,7 +286,11 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
             val top = if (s.progress.isNotEmpty() && s.etaAt != null) "${s.progress} · ${clockText(s.etaAt)} 도착" else s.progress
             canvas.drawText(top, 18f, 14f + 13f, small)
             val off = offlineSince
-            if (off != null && !s.idle) {
+            if (s.cachedAt != null && !s.idle) {
+                // 앱을 다시 켰는데 아직 서버와 연결 전: 캐시에서 되살린 마지막 화면
+                val t = "저장된 화면 · ${ageText(now - s.cachedAt)}" + if (s.offlinePreview) " · 미리보기" else ""
+                canvas.drawText(t, W - 18f - offlinePaint.measureText(t), 14f + 13f, offlinePaint)
+            } else if (off != null && !s.idle) {
                 // 연결이 끊겨도 화면은 그대로 두고 오른쪽 위에만 알린다 (일반 지도 앱의 오프라인 배너처럼)
                 val t = "연결 끊김 · ${ageText(now - off).removeSuffix(" 전")}" + if (s.offlinePreview) " · 미리보기" else ""
                 canvas.drawText(t, W - 18f - offlinePaint.measureText(t), 14f + 13f, offlinePaint)
@@ -344,7 +348,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
 
         // 위치가 미끄러지는 중이거나 센서 방향을 쓰면 계속 다시 그림. 길안내 중이면 1초마다 (위치 경과 시간 갱신)
         if (glideFrom != null || (sensor != null && pos != null && mapMode != MapMode.OFF)) postInvalidateOnAnimation()
-        else if (navigating || offlineSince != null) postInvalidateDelayed(1000)
+        else if (navigating || offlineSince != null || s.cachedAt != null) postInvalidateDelayed(1000)
         else postInvalidateDelayed(15_000) // 오른쪽 아래 시각
     }
 

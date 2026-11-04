@@ -25,6 +25,7 @@ class MainActivity : Activity() {
     private lateinit var updater: Updater
     private var lastCalib: MapPos? = null
     private lateinit var prefs: android.content.SharedPreferences
+    private lateinit var cache: GlassCache
     private var checkedUpdate = false
 
     private fun distM(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
@@ -49,6 +50,13 @@ class MainActivity : Activity() {
         setContentView(root)
 
         prefs = getSharedPreferences("route", Context.MODE_PRIVATE)
+        // 캐시: 진행 중이던 경로가 있으면 연결 전이라도 마지막 화면을 바로 (서버에서 새로 받으면 덮는다)
+        cache = GlassCache(java.io.File(filesDir, "glass-cache"))
+        cache.routeMessages().takeIf { it.isNotEmpty() }?.let { saved ->
+            var st = HudState()
+            for (m in saved) st = st.apply(m.json, m.at)
+            hud.state = st.copy(cachedAt = saved.last().at, status = "연결 중…")
+        }
         hud.viewStyle = runCatching { HudView.ViewStyle.valueOf(prefs.getString("viewStyle", "FULL")!!) }.getOrDefault(HudView.ViewStyle.FULL)
         hud.mapMode = runCatching { HudView.MapMode.valueOf(prefs.getString("mapMode", "AUTO")!!) }.getOrDefault(HudView.MapMode.AUTO)
         client = ServerClient(
@@ -150,8 +158,16 @@ class MainActivity : Activity() {
     }
 
     private fun onServerMessage(m: JSONObject) {
+        cache.record(m)
         val s = hud.state
-        val next = s.apply(m)
+        var next = s.apply(m)
+        // 주변 도로가 없거나 멀어졌으면, 1일 안에 받아 둔 그 동네 도로를 먼저 깔아 둔다 (서버가 새로 보내면 바뀜)
+        val np = next.pos
+        if (m.optString("type") == "map-pos" && np != null) {
+            val center = next.roads?.lines?.firstOrNull()?.firstOrNull()
+            val far = center == null || GlassCache.distM(np.lon, np.lat, center[0], center[1]) > GlassCache.ROADS_NEAR_M * 2
+            if (far) cache.roadsNear(np.lon, np.lat)?.let { next = next.apply(it) }
+        }
         // 경로 위를 실제로 걷는 중(직전 보정 위치에서 3m+)일 때만 상대 방향 센서의 0°를 경로 방향에 맞춘다.
         // 서서 두리번거릴 때 맞추면 보는 방향이 경로 방향으로 끌려간다
         val p = next.pos
@@ -184,29 +200,39 @@ class MainActivity : Activity() {
             "choose-done" -> if (choosing == m.optInt("id")) { choosing = null; hud.menu = null }
             // 버스·지하철 시간 (메뉴에서 열었을 때만 반영, 20초 뒤 다시 요청)
             "nearby" -> if (sub is Sub.Nearby) {
-                val a = m.optJSONArray("boards") ?: org.json.JSONArray()
-                val boards = List(a.length()) { i ->
-                    a.getJSONObject(i).let { o ->
-                        val ls = o.optJSONArray("lines") ?: org.json.JSONArray()
-                        HudView.Board(
-                            o.optString("kind"), o.optString("name"), if (o.isNull("distance")) null else o.optInt("distance"),
-                            List(ls.length()) { j -> StopBoard.lineOf(ls.getJSONObject(j)) },
-                            if (o.has("error")) o.optString("error") else null,
-                        )
-                    }
-                }
-                showSub(Sub.Nearby(boards, m.optString("note"), System.currentTimeMillis()), 0)
+                showSub(Sub.Nearby(parseBoards(m), m.optString("note"), System.currentTimeMillis()), 0)
                 hud.removeCallbacks(refreshNearby)
                 hud.postDelayed(refreshNearby, 20_000)
             }
             // 즐겨찾기 목록 (메뉴 → 즐겨찾기 를 열 때 요청)
-            "favorites" -> if (sub == Sub.Loading) {
-                val a = m.optJSONArray("items") ?: org.json.JSONArray()
-                val items = List(a.length()) { i ->
-                    a.getJSONObject(i).let { Fav(it.getString("id"), it.getString("name"), it.optString("category", "기타"), it.optString("address"), if (it.isNull("distance")) null else it.optInt("distance")) }
-                }
-                val cats = m.optJSONArray("categories")?.let { c -> List(c.length()) { c.getString(it) } } ?: items.map { it.category }.distinct()
-                showSub(Sub.Categories(FavData(cats, items)), 0)
+            // 열려 있는 첫 화면(불러오는 중·카테고리)이면 새 목록으로. 더 들어가 있으면 그대로 둔다
+            "favorites" -> when (val cur = sub) {
+                Sub.Loading -> showSub(Sub.Categories(parseFavorites(m)), 0)
+                is Sub.Categories -> showSub(Sub.Categories(parseFavorites(m)), hud.menu?.selected ?: 0)
+                else -> {}
+            }
+        }
+    }
+
+    private fun parseFavorites(m: JSONObject): FavData {
+        val a = m.optJSONArray("items") ?: org.json.JSONArray()
+        val items = List(a.length()) { i ->
+            a.getJSONObject(i).let { Fav(it.getString("id"), it.getString("name"), it.optString("category", "기타"), it.optString("address"), if (it.isNull("distance")) null else it.optInt("distance")) }
+        }
+        val cats = m.optJSONArray("categories")?.let { c -> List(c.length()) { c.getString(it) } } ?: items.map { it.category }.distinct()
+        return FavData(cats, items)
+    }
+
+    private fun parseBoards(m: JSONObject): List<HudView.Board> {
+        val a = m.optJSONArray("boards") ?: org.json.JSONArray()
+        return List(a.length()) { i ->
+            a.getJSONObject(i).let { o ->
+                val ls = o.optJSONArray("lines") ?: org.json.JSONArray()
+                HudView.Board(
+                    o.optString("kind"), o.optString("name"), if (o.isNull("distance")) null else o.optInt("distance"),
+                    List(ls.length()) { j -> StopBoard.lineOf(ls.getJSONObject(j)) },
+                    if (o.has("error")) o.optString("error") else null,
+                )
             }
         }
     }
@@ -393,11 +419,16 @@ class MainActivity : Activity() {
         when (item) {
             Item.BACK_TO_NAV -> hud.menu = null
             Item.FAVORITES -> {
-                showSub(Sub.Loading, 0)
-                request(JSONObject().put("type", "favorites"), "즐겨찾기 목록")
+                // 저장해 둔 목록이 있으면 바로 보여 주고, 새 목록을 받으면 바꾼다
+                val saved = cache.favorites()
+                if (saved != null) showSub(Sub.Categories(parseFavorites(saved.json)), 0) else showSub(Sub.Loading, 0)
+                if (!client.send(JSONObject().put("type", "favorites")) && saved == null) showNotice("연결 끊김 · 저장된 목록 없음")
             }
             Item.NEARBY -> {
-                showSub(Sub.Nearby(null, if (client.connected) "주변 정류장·역 찾는 중…" else "연결 끊김 · 연결되면 불러옴", null), 0)
+                // 10분 안에 받은 결과가 있으면 바로 (남은 시간은 줄여서), 새 결과를 받으면 바꾼다
+                val saved = cache.nearby()
+                if (saved != null) showSub(Sub.Nearby(parseBoards(saved.json), saved.json.optString("note"), saved.at), 0)
+                else showSub(Sub.Nearby(null, if (client.connected) "주변 정류장·역 찾는 중…" else "연결 끊김 · 연결되면 불러옴", null), 0)
                 request(JSONObject().put("type", "nearby"), "버스·지하철 시간")
             }
             Item.STOP -> when {

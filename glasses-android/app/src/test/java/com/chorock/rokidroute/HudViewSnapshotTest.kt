@@ -141,6 +141,10 @@ class HudViewSnapshotTest {
         paparazzi.snapshot(v, "19_offline")
         v.state = s.previewStep((s.index ?: 0) + 1).copy(status = "서버 응답 없음 · 8초 뒤 재연결")
         paparazzi.snapshot(v, "20_offline_preview")
+        // 앱을 다시 켰는데 아직 연결 전: 캐시에서 되살린 3분 전 화면
+        v.offlineSince = null
+        v.state = s.copy(cachedAt = T0 + 20_000 - 180_000, status = "연결 중…")
+        paparazzi.snapshot(v, "23_cached_screen")
     }
 
     /** 정류장 보드: 75초째 새로 못 받음 → 남은 시간을 줄이고 "~" / 실시간 실패 이유 */
