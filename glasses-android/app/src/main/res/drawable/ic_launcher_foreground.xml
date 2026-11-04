@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 앱 아이콘: 세 쪽으로 접힌 지도 + 경로 점선 + 위치 핀 (안경 화면과 같은 초록) -->
+<!-- 앱 아이콘: 세 쪽으로 접힌 지도 + 경로 + 위치 핀. 배경은 완전 투명 (투과형 안경에서 검정 판이 보이지 않게) -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <path android:pathData="M45,32 L63,38 L63,82 L45,76 Z" android:fillColor="#00FF66" android:fillAlpha="0.10"/>
-    <path android:pathData="M29,38 L45,32 L45,76 L29,82 Z" android:fillColor="#00FF66" android:fillAlpha="0.04"/>
-    <path android:pathData="M63,38 L79,32 L79,76 L63,82 Z" android:fillColor="#00FF66" android:fillAlpha="0.04"/>
-    <path android:pathData="M29,38 L45,32 L63,38 L79,32 L79,76 L63,82 L45,76 L29,82 Z M45,32 L45,76 M63,38 L63,82" android:strokeColor="#00FF66" android:strokeWidth="2.6" android:strokeLineJoin="round" android:strokeLineCap="round"/>
-    <path android:pathData="M34,73 C40,70 44,66 47,63 S52,58 54,57" android:strokeColor="#00FF66" android:strokeWidth="2.2" android:strokeLineCap="round" android:strokeAlpha="0.75"/>
-    <path android:pathData="M54,32 C49.3,32 45.6,35.6 45.6,40.2 C45.6,46.4 54,55 54,55 C54,55 62.4,46.4 62.4,40.2 C62.4,35.6 58.7,32 54,32 Z" android:fillColor="#00FF66" android:strokeColor="#08140D" android:strokeWidth="2.4"/>
-    <path android:pathData="M54,37.2 A3,3 0 1,0 54,43.2 A3,3 0 1,0 54,37.2 Z" android:fillColor="#08140D"/>
+    <!-- 원형 마스크(반지름 36) 안에 들어가게 가운데로 옮기고 살짝 줄임 -->
+    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.95" android:scaleY="0.95" android:translateY="-3">
+        <path android:pathData="M45,32 L63,38 L63,82 L45,76 Z" android:fillColor="#00FF66" android:fillAlpha="0.10"/>
+        <path android:pathData="M29,38 L45,32 L63,38 L79,32 L79,76 L63,82 L45,76 L29,82 Z M45,32 L45,76 M63,38 L63,82" android:strokeColor="#00FF66" android:strokeWidth="2.6" android:strokeLineJoin="round" android:strokeLineCap="round"/>
+        <path android:pathData="M34,73 C40,70 44,66 47,63 S52,58 54,57" android:strokeColor="#00FF66" android:strokeWidth="2.2" android:strokeLineCap="round" android:strokeAlpha="0.75"/>
+        <!-- 핀: 가운데 구멍은 뚫어서(evenOdd) 뒤가 그대로 보이게 -->
+        <path android:pathData="M54,32 C49.3,32 45.6,35.6 45.6,40.2 C45.6,46.4 54,55 54,55 C54,55 62.4,46.4 62.4,40.2 C62.4,35.6 58.7,32 54,32 Z M54,37.2 A3,3 0 1,0 54,43.2 A3,3 0 1,0 54,37.2 Z" android:fillColor="#00FF66" android:fillType="evenOdd"/>
+    </group>
 </vector>
