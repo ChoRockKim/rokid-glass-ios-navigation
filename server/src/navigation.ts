@@ -1,7 +1,7 @@
 // 진행 상태. 개인용이라 활성 경로는 하나만 둔다.
 // 진행은 두 가지로 바뀐다: 수동(안경 탭, /route next) 과 위치(POST /location).
 import type { LonLat, Place, WalkRoute } from "./kakao.js";
-import { buildGuide, formatDistance, line2For, type Arrival, type GuideStep, type Turn } from "./guide.js";
+import { buildGuide, distanceM, formatDistance, line2For, type Arrival, type GuideStep, type RideInfo, type Turn } from "./guide.js";
 import { RouteTracker } from "./tracking.js";
 
 export { formatDistance };
@@ -65,6 +65,8 @@ export type GlassMessage =
         stopsLeft: number;
         arrivals: Arrival[];
       };
+      /** 탈 정류장·역 근처(AT_STOP_M)에서 아직 안 탔으면 그곳의 실시간 도착. 안경 간소 화면이 오른쪽에 보여 준다 */
+      stop?: StopBoard;
     }
   | { type: "arrived"; destination: string; text: string }
   | { type: "idle"; text: string };
@@ -139,6 +141,47 @@ function remainingOf(a: ActiveRoute): number | null {
   return Math.max(0, a.tracker.stepEnd[a.index]! - a.progress);
 }
 
+/** 정류장 보드: 내가 탈 노선(노선별 도착 두 개까지)과 나머지(노선별 첫 도착) */
+export interface StopBoard {
+  kind: "bus" | "subway";
+  name: string;
+  mine: { line: string; times: string[] }[];
+  others: { line: string; times: string[] }[];
+}
+
+/** 탈 정류장에서 이만큼 안이면 정류장 보드를 보낸다 */
+export const AT_STOP_M = 100;
+
+/** "3분", "곧 도착", "2역 전" */
+export function whenText(a: Arrival): string {
+  if (a.etaSec === null) return a.message.replace(/\[.*?\]/g, "").trim() || a.message;
+  if (a.etaSec <= 60) return "곧 도착";
+  return `${Math.ceil(a.etaSec / 60)}분`;
+}
+
+function boardOf(ride: RideInfo, now: number): StopBoard | null {
+  const fresh = ride.live && ride.liveAt !== null && now - ride.liveAt < LIVE_MAX_AGE_MS;
+  if (!fresh) return null;
+  const sorted = [...ride.live!].sort((x, y) => (x.etaSec ?? 1e9) - (y.etaSec ?? 1e9));
+  const group = (xs: Arrival[], per: number) => {
+    const out = new Map<string, string[]>();
+    for (const a of xs) {
+      // 지하철은 같은 호선이라도 방향이 다르면 따로 ("1호선 청량리행")
+      const key = ride.kind === "subway" && a.direction ? `${a.line} ${a.direction.split(" - ")[0]}` : a.line;
+      const t = out.get(key) ?? [];
+      if (t.length < per) t.push(whenText(a));
+      out.set(key, t);
+    }
+    return [...out].map(([line, times]) => ({ line, times }));
+  };
+  return {
+    kind: ride.kind,
+    name: ride.board,
+    mine: group(sorted.filter((a) => a.mine !== false), 2).slice(0, 3),
+    others: group(sorted.filter((a) => a.mine === false), 1).slice(0, 8),
+  };
+}
+
 /** 탑승으로 볼 진행 거리 (정류장에서 이만큼 지나면 탄 것으로 본다) */
 const BOARDED_M = 80;
 /** 이보다 오래된 실시간 정보는 안 쓴다 */
@@ -175,7 +218,7 @@ function rideView(a: ActiveRoute, step: GuideStep, now: number) {
   const icon = r.kind === "bus" ? "[버스]" : "[지하철]";
   const name = r.lines.slice(0, 3).join("/");
   const fresh = r.live && r.liveAt !== null && now - r.liveAt < LIVE_MAX_AGE_MS;
-  const arrivals = fresh ? [...r.live!].sort((x, y) => (x.etaSec ?? 1e9) - (y.etaSec ?? 1e9)) : [];
+  const arrivals = fresh ? r.live!.filter((a) => a.mine !== false).sort((x, y) => (x.etaSec ?? 1e9) - (y.etaSec ?? 1e9)) : [];
   const line1 = boarded
     ? `${icon} ${name} 탑승 중`
     : arrivals.length
@@ -211,6 +254,24 @@ export function etaSecFor(a: ActiveRoute, now: number): number {
   return Math.round(t);
 }
 
+/** 지금 단계(아직 안 탄 탑승) 또는 다음 단계(탑승)의 정류장 근처면 그 정류장 보드 */
+function stopBoardFor(a: ActiveRoute, now: number): StopBoard | null {
+  const p = a.lastPosition;
+  if (!p) return null;
+  for (const i of [a.index, a.index + 1]) {
+    const step = a.guide[i];
+    const ride = step?.ride;
+    if (!ride?.boardPoint) continue;
+    if (i === a.index) {
+      const start = a.tracker.stepStart[i] ?? 0;
+      if (a.progress !== null && a.progress - start > BOARDED_M) return null; // 이미 탐
+    }
+    if (distanceM([p.lon, p.lat], ride.boardPoint) > AT_STOP_M) return null;
+    return boardOf(ride, now);
+  }
+  return null;
+}
+
 export function messageFor(active: ActiveRoute | null, now = Date.now()): GlassMessage {
   if (!active) return { type: "idle", text: "경로 없음" };
   const { guide, index, to } = active;
@@ -234,6 +295,10 @@ export function messageFor(active: ActiveRoute | null, now = Date.now()): GlassM
     offRoute: active.offRoute,
     destination: to.name,
     ...(rv ? { ride: rv.ride } : {}),
+    ...((): { stop?: StopBoard } => {
+      const b = stopBoardFor(active, now);
+      return b ? { stop: b } : {};
+    })(),
   };
 }
 

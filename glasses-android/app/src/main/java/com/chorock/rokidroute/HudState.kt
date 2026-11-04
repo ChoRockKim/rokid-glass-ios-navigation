@@ -23,6 +23,8 @@ data class HudState(
     val remaining: Double? = null,
     /** 버스·지하철에 타고 있는 중 */
     val riding: Boolean = false,
+    /** 탈 정류장 근처면 그곳의 실시간 도착 (간소 화면 오른쪽) */
+    val stop: StopBoard? = null,
 ) {
     /** 서버 메시지 하나를 반영한 새 상태. now 는 받은 시각 */
     fun apply(m: JSONObject, now: Long = System.currentTimeMillis()): HudState = when (m.optString("type")) {
@@ -36,9 +38,10 @@ data class HudState(
             etaAt = if (m.has("etaSec")) now + m.optLong("etaSec") * 1000 else null,
             remaining = if (m.isNull("remaining")) null else m.optDouble("remaining"),
             riding = m.optJSONObject("ride")?.optBoolean("boarded") == true,
+            stop = m.optJSONObject("stop")?.let { StopBoard.fromJson(it) },
         )
-        "arrived" -> copy(line1 = "도착", line2 = m.optString("destination"), progress = "", destination = "", warn = false, idle = false, etaAt = null, remaining = null, riding = false)
-        "idle" -> copy(line1 = m.optString("text", "경로 없음"), line2 = "폰에서 길안내를 시작하세요", progress = "", destination = "", warn = false, idle = true, route = null, pos = null, etaAt = null, remaining = null, riding = false)
+        "arrived" -> copy(line1 = "도착", line2 = m.optString("destination"), progress = "", destination = "", warn = false, idle = false, etaAt = null, remaining = null, riding = false, stop = null)
+        "idle" -> copy(line1 = m.optString("text", "경로 없음"), line2 = "폰에서 길안내를 시작하세요", progress = "", destination = "", warn = false, idle = true, route = null, pos = null, etaAt = null, remaining = null, riding = false, stop = null)
         "map-route" -> {
             val segs = m.getJSONArray("segments")
             copy(route = MapRoute(
@@ -91,3 +94,15 @@ data class MapPos(
 }
 /** kinds: major · road · service · path · rail. buildings: 건물 바깥 윤곽 */
 data class MapRoads(val lines: List<List<DoubleArray>>, val major: List<Boolean>, val kinds: List<String> = emptyList(), val buildings: List<List<DoubleArray>> = emptyList())
+
+/** 정류장 보드: 내가 탈 노선(노선별 도착 두 개까지)과 나머지 노선(첫 도착) */
+data class StopBoard(val kind: String, val name: String, val mine: List<Line>, val others: List<Line>) {
+    data class Line(val line: String, val times: List<String>)
+
+    companion object {
+        private fun lines(a: JSONArray?) = if (a == null) emptyList() else List(a.length()) { i ->
+            a.getJSONObject(i).let { o -> Line(o.optString("line"), o.optJSONArray("times")?.let { t -> List(t.length()) { t.getString(it) } } ?: emptyList()) }
+        }
+        fun fromJson(o: JSONObject) = StopBoard(o.optString("kind"), o.optString("name"), lines(o.optJSONArray("mine")), lines(o.optJSONArray("others")))
+    }
+}

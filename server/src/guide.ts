@@ -13,6 +13,8 @@ export interface Arrival {
   etaSec: number | null; // 도착까지 초. 모르면 null
   message: string; // 원문 요약 (예: "3분후[2번째 전]", "전역 도착")
   direction?: string; // 예: "청량리 방면"
+  /** 내가 탈 수 있는 노선·방향인지. 없으면 true 로 본다 (예전 데이터) */
+  mine?: boolean;
 }
 
 /** 버스·지하철 구간 */

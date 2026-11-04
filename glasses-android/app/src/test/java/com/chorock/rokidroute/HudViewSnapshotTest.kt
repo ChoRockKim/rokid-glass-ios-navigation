@@ -55,7 +55,7 @@ class HudViewSnapshotTest {
     @Test
     fun compactStyle() {
         val f = fixture()
-        for ((c, name) in listOf(2 to "walking", 4 to "bus_stop")) {
+        for ((c, name) in listOf(2 to "walking", 4 to "bus_stop", 6 to "subway_station")) {
             val v = HudView(paparazzi.context) { null }
             v.clock = { T0 + 5_000 }
             v.viewStyle = HudView.ViewStyle.COMPACT

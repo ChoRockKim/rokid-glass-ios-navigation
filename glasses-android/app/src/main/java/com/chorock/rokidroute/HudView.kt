@@ -281,7 +281,9 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         val line2 = if (pairCode != null) "폰 단축어 \"안경 연결\"에 입력" else s.line2
         big.color = if (s.warn && pairCode == null) Color.WHITE else if (s.idle && pairCode == null) dim else green
         mid.color = if (s.idle && pairCode == null) dim else green
-        if (compact) {
+        if (compact && s.stop != null && (s.stop.mine.isNotEmpty() || s.stop.others.isNotEmpty())) {
+            drawStopBoard(canvas, s.stop)
+        } else if (compact) {
             // 간소 화면: 오른쪽 아래에 작은 글자 (오른쪽 정렬, 아래 상태 줄 바로 위에서 끝나게)
             smallBig.color = big.color
             smallMid.color = mid.color
@@ -479,6 +481,53 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         }
         if (status.isNotEmpty()) canvas.drawText(status, x - tiny.measureText(status), baseline, tiny)
     }
+
+    /**
+     * 간소 화면 + 탈 정류장 근처: 오른쪽에 정류장 보드 (아래 상태 줄 위에서 끝나게, 오른쪽 정렬)
+     *                                   [버스] 외대역앞
+     *                              421번  3분 · 7분      ← 내가 탈 노선: 밝고 굵게
+     *            2014번 곧 도착   N62번 운행대기   ...    ← 나머지: 작고 흐리게, 여러 줄
+     */
+    private fun drawStopBoard(canvas: Canvas, b: StopBoard) {
+        val right = W - 18f
+        val width = right - COMPACT_TEXT_X
+        val name = { l: String -> if (b.kind == "bus" && l.isNotEmpty() && l.last().isDigit()) "${l}번" else l }
+        // 나머지: 한 줄에 들어가는 만큼씩 (최대 3줄)
+        val othersText = b.others.map { "${name(it.line)} ${it.times.firstOrNull() ?: ""}".trim() }
+        val otherLines = mutableListOf<String>()
+        var cur = ""
+        for (t in othersText) {
+            val next = if (cur.isEmpty()) t else "$cur   $t"
+            if (boardOther.measureText(next) <= width) cur = next
+            else { if (cur.isNotEmpty()) otherLines += cur; cur = t }
+        }
+        if (cur.isNotEmpty()) otherLines += cur
+        val others = otherLines.take(3)
+        val mineRows = b.mine.take(3)
+        // 아래에서 위로 쌓는다
+        var y = H - 30f
+        for (line in others.reversed()) {
+            val t = TextUtils.ellipsize(line, boardOther, width, TextUtils.TruncateAt.END)
+            canvas.drawText(t, 0, t.length, right - boardOther.measureText(t, 0, t.length), y, boardOther)
+            y -= 15f
+        }
+        if (others.isNotEmpty()) y -= 6f
+        for (row in mineRows.reversed()) {
+            val times = row.times.joinToString(" · ")
+            val tw = boardMineTime.measureText(times)
+            canvas.drawText(times, right - tw, y, boardMineTime)
+            val label = TextUtils.ellipsize(name(row.line), boardMine, (width - tw - 10f).coerceAtLeast(0f), TextUtils.TruncateAt.END)
+            canvas.drawText(label, 0, label.length, right - tw - 10f - boardMine.measureText(label, 0, label.length), y, boardMine)
+            y -= 22f
+        }
+        val head = TextUtils.ellipsize("${if (b.kind == "bus") "[버스]" else "[지하철]"} ${b.name}", boardHead, width, TextUtils.TruncateAt.END)
+        canvas.drawText(head, 0, head.length, right - boardHead.measureText(head, 0, head.length), y - 2f, boardHead)
+    }
+
+    private val boardHead = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 12f; color = dim; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
+    private val boardMine = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 18f; typeface = Typeface.DEFAULT_BOLD; color = green; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
+    private val boardMineTime = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 15f; color = green; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
+    private val boardOther = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f; color = dim; alpha = 200; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
 
     private fun layoutOf(text: String, paint: TextPaint, width: Int, maxLines: Int, align: Layout.Alignment): StaticLayout? =
         if (text.isEmpty()) null

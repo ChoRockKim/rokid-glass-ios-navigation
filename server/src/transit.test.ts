@@ -87,3 +87,36 @@ test("Navigator: 버스 구간 대기 → 실시간 표시 → 탑승 중", () =
   now += 100_000;
   nav.stop();
 });
+
+test("정류장 보드: 탈 정류장 근처에서 내 버스(강조)와 나머지(약하게), 타면 사라짐", () => {
+  let now = 0;
+  const nav = new Navigator(() => now);
+  const legs = parseTransit(raw).routes[0]!.legs;
+  const guide: GuideStep[] = [rideStep(legs[2]!)];
+  const place = { name: "성동구청", address: "", x: 0, y: 0 };
+  nav.start({ from: place, to: place, route: { totalDistance: 1, totalTime: 1, steps: [] }, guide, mode: "transit", startedBy: "t" });
+  nav.setArrivals(nav.upcomingRide()!.step, [
+    { line: "421", etaSec: 400, message: "6분40초후", mine: true },
+    { line: "421", etaSec: 130, message: "2분10초후", mine: true },
+    { line: "2014", etaSec: 50, message: "곧 도착", mine: false },
+    { line: "2014", etaSec: 900, message: "15분후", mine: false },
+    { line: "N62", etaSec: null, message: "운행대기", mine: false },
+  ]);
+  // 위치를 모르면 보드 없음
+  let m = nav.snapshot();
+  assert.ok(m.type === "step" && !m.stop && m.line1 === "[버스] 421 3분 · 7분 후"); // 나머지 버스는 안내 문구에 안 섞임
+  // 정류장 바로 앞
+  const p0 = legs[2]!.points[0]!;
+  nav.updatePositions([{ lon: p0[0], lat: p0[1] + 0.0003, acc: 5, ts: 1 }]);
+  m = nav.snapshot();
+  assert.ok(m.type === "step" && m.stop);
+  if (m.type === "step" && m.stop) {
+    assert.deepEqual(m.stop.mine, [{ line: "421", times: ["3분", "7분"] }]);
+    assert.deepEqual(m.stop.others, [{ line: "2014", times: ["곧 도착"] }, { line: "N62", times: ["운행대기"] }]);
+  }
+  // 타고 300m 가면 보드 없음
+  const pts = legs[2]!.points;
+  nav.updatePositions([{ lon: pts[10]![0], lat: pts[10]![1], acc: 5, ts: 2 }]);
+  m = nav.snapshot();
+  assert.ok(m.type === "step" && !m.stop);
+});

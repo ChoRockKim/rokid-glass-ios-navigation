@@ -80,25 +80,23 @@ export function subwayProvider(key: string, base = "http://swopenapi.seoul.go.kr
         ? ((JSON.parse(text).realtimeArrivalList ?? []) as Record<string, string>[])
         : xmlItems(text, "row");
       const next = r.stops[1] ? stationName(r.stops[1]) : null;
-      const result = rows
-        .filter((x) => {
-          const line = SUBWAY_IDS[String(x.subwayId)] ?? "";
-          const lineOk = !r.lines.length || r.lines.some((l) => line && l.includes(line.replace("선", "")));
-          // 진행 방향: "…행 - {다음역}방면"
-          const dirOk = !next || String(x.trainLineNm ?? "").includes(`${next}방면`);
-          return lineOk && dirOk;
-        })
-        .map((x) => {
-          const sec = Number(x.barvlDt);
-          const msg = String(x.arvlMsg2 ?? "");
-          return {
-            line: SUBWAY_IDS[String(x.subwayId)] ?? r.lines[0] ?? "지하철",
-            etaSec: Number.isFinite(sec) && sec > 0 ? sec : parseEta(msg),
-            message: shortSubwayMsg(msg),
-            direction: String(x.trainLineNm ?? ""),
-          };
-        });
-      if (!result.length && debug) {
+      // 역의 모든 열차를 돌려주고, 내가 탈 노선·방향만 mine (안경 간소 화면에서 나머지는 약하게 보여 준다)
+      const result = rows.map((x) => {
+        const line = SUBWAY_IDS[String(x.subwayId)] ?? "";
+        const lineOk = !r.lines.length || r.lines.some((l) => line && l.includes(line.replace("선", "")));
+        // 진행 방향: "…행 - {다음역}방면"
+        const dirOk = !next || String(x.trainLineNm ?? "").includes(`${next}방면`);
+        const sec = Number(x.barvlDt);
+        const msg = String(x.arvlMsg2 ?? "");
+        return {
+          line: line || r.lines[0] || "지하철",
+          etaSec: Number.isFinite(sec) && sec > 0 ? sec : parseEta(msg),
+          message: shortSubwayMsg(msg),
+          direction: String(x.trainLineNm ?? ""),
+          mine: lineOk && dirOk,
+        };
+      });
+      if (!result.some((a) => a.mine) && debug) {
         const err = text.split(key).join("***").replace(/\s+/g, " ").slice(0, 300);
         debug(
           `subway debug ${station}: rows=${rows.length} want lines=${r.lines.join("/")} next=${next ?? "-"} head=${err} sample=${JSON.stringify(
@@ -147,14 +145,13 @@ export function seoulBusProvider(key: string, base = "http://ws.bus.go.kr/api/re
       const ars = await arsIdFor(r);
       if (!ars) return [];
       const list = await items("stationinfo/getStationByUid", { arsId: ars });
+      // 정류장의 모든 버스를 돌려주고, 내가 탈 노선만 mine (안경 간소 화면에서 나머지는 약하게 보여 준다)
       const wanted = new Set(r.lines.map((l) => l.replace(/번$/, "")));
-      return list
-        .filter((x) => !wanted.size || wanted.has(String(x.rtNm ?? "")))
-        .flatMap((x) =>
-          [x.arrmsg1, x.arrmsg2]
-            .filter((m): m is string => Boolean(m) && !/운행종료|출발대기/.test(String(m)))
-            .map((m) => ({ line: String(x.rtNm ?? ""), etaSec: parseEta(m), message: m })),
-        );
+      return list.flatMap((x) =>
+        [x.arrmsg1, x.arrmsg2]
+          .filter((m): m is string => Boolean(m) && !/운행종료|출발대기/.test(String(m)))
+          .map((m) => ({ line: String(x.rtNm ?? ""), etaSec: parseEta(m), message: m, mine: !wanted.size || wanted.has(String(x.rtNm ?? "")) })),
+      );
     },
   };
 }
@@ -186,7 +183,7 @@ export function startRealtimePoller(nav: Navigator, providers: ArrivalProvider[]
     try {
       const arrivals = await provider.fetch(up.step.ride);
       nav.setArrivals(up.step, arrivals);
-      log(`realtime ${provider.name} ${up.step.ride.board}: ${arrivals.slice(0, 3).map((a) => `${a.line} ${a.message} eta=${a.etaSec ?? "-"}`).join(" | ") || "없음"}`);
+      log(`realtime ${provider.name} ${up.step.ride.board}: ${arrivals.filter((a) => a.mine !== false).slice(0, 3).map((a) => `${a.line} ${a.message} eta=${a.etaSec ?? "-"}`).join(" | ") || "없음"}`);
     } catch (e) {
       // 키 미활성 등으로 계속 실패할 때 20초마다 두드리지 않도록 잠시 쉰다
       lastAt = Date.now() + FAIL_BACKOFF_MS - POLL_MS;
