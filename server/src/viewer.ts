@@ -12,11 +12,15 @@ export const VIEWER_HTML = `<!doctype html>
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--bg); color: var(--g); font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
   main { max-width: 520px; margin: 0 auto; padding: 16px; }
-  .glass { position: relative; width: 100%; aspect-ratio: 480 / 352; background: #000; border-radius: 14px; padding: 4% 4.5%; overflow: hidden; box-shadow: 0 0 0 1px #133, 0 8px 30px #0008; }
-  .top, .bottom { display: flex; justify-content: space-between; font-size: clamp(12px, 3.6vw, 18px); color: var(--dim); }
-  .bottom { position: absolute; left: 4.5%; right: 4.5%; bottom: 3.5%; }
-  .line1 { margin-top: 9%; font-size: clamp(20px, 7vw, 34px); line-height: 1.3; font-weight: 700; word-break: keep-all; }
-  .line2 { margin-top: 3%; font-size: clamp(16px, 5.4vw, 26px); line-height: 1.3; word-break: keep-all; }
+  /* 안경 화면은 480x352 dp. 안내는 아래쪽 480x282 띠에만 그리고 위 70 은 비운다 (앞을 가리지 않게) */
+  .stage-wrap { position: relative; width: 100%; overflow: hidden; border-radius: 14px; box-shadow: 0 0 0 1px #133, 0 8px 30px #0008; }
+  .stage { position: absolute; left: 0; top: 0; width: 480px; height: 352px; transform-origin: top left; background: #000; }
+  .free { position: absolute; left: 0; top: 0; width: 480px; height: 70px; background: repeating-linear-gradient(45deg, #050805, #050805 8px, #000 8px, #000 16px); color: #1d3a26; font-size: 13px; display: flex; align-items: center; justify-content: center; }
+  .glass { position: absolute; left: 0; bottom: 0; width: 480px; height: 282px; padding: 14px 18px; overflow: hidden; }
+  .top, .bottom { display: flex; justify-content: space-between; font-size: 16px; height: 22px; color: var(--dim); }
+  .bottom { position: absolute; left: 18px; right: 18px; bottom: 10px; font-size: 14px; height: 18px; }
+  .line1 { margin-top: 18px; font-size: 30px; line-height: 38px; max-height: 76px; overflow: hidden; font-weight: 700; word-break: keep-all; }
+  .line2 { margin-top: 10px; font-size: 22px; line-height: 30px; max-height: 60px; overflow: hidden; word-break: keep-all; }
   .warn .line1 { color: #fff; }
   .idle .line1, .idle .line2 { color: var(--dim); }
   .controls { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; margin-top: 14px; }
@@ -30,11 +34,16 @@ export const VIEWER_HTML = `<!doctype html>
 </head>
 <body>
 <main>
-  <div id="glass" class="glass idle">
-    <div class="top"><span id="progress"></span><span id="dest"></span></div>
-    <div id="line1" class="line1">연결 전</div>
-    <div id="line2" class="line2">아래에 GLASS_TOKEN 을 넣으세요</div>
-    <div class="bottom"><span id="status"></span><span>탭 다음 · ▲ 이전</span></div>
+  <div id="wrap" class="stage-wrap">
+    <div id="stage" class="stage">
+      <div class="free">시야 (비움 · 480×70)</div>
+      <div id="glass" class="glass idle">
+        <div class="top"><span id="progress"></span><span id="dest"></span></div>
+        <div id="line1" class="line1">연결 전</div>
+        <div id="line2" class="line2">아래에 GLASS_TOKEN 을 넣으세요</div>
+        <div class="bottom"><span id="status"></span><span>탭 다음 · ▲ 이전</span></div>
+      </div>
+    </div>
   </div>
 
   <div class="controls">
@@ -55,6 +64,9 @@ export const VIEWER_HTML = `<!doctype html>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
+  // 480x352 dp 화면을 그대로 그리고 폭에 맞춰 통째로 축소/확대 (줄바꿈이 안경과 같게)
+  const fit = () => { const w = $('wrap').clientWidth; const k = w / 480; $('stage').style.transform = 'scale(' + k + ')'; $('wrap').style.height = (352 * k) + 'px'; };
+  window.addEventListener('resize', fit); fit();
   const KEY = 'glassToken';
   let ws = null, wait = 2000, timer = null, watchId = null, lastSent = 0;
 
