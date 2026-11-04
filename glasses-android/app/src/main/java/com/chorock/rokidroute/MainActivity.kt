@@ -187,7 +187,7 @@ class MainActivity : Activity() {
         }
     }
 
-    // ── 즐겨찾기: 메뉴 → 즐겨찾기 → 카테고리 → 장소 → 도보/대중교통 ──
+    // ── 즐겨찾기: 메뉴 → 즐겨찾기 → 카테고리 → 장소 → 바로 안내 (가까우면 도보, 멀면 대중교통 후보를 안경에서 고름) ──
     data class Fav(val id: String, val name: String, val category: String, val address: String, val distance: Int?)
     data class FavData(val categories: List<String>, val items: List<Fav>)
 
@@ -197,7 +197,6 @@ class MainActivity : Activity() {
         data class Places(val data: FavData, val category: String, val parentSel: Int) : Sub() {
             val items get() = data.items.filter { it.category == category }
         }
-        data class Mode(val places: Places, val fav: Fav, val parentSel: Int) : Sub()
     }
 
     /** 메인 메뉴 아래 화면. null 이면 메인 메뉴 */
@@ -220,7 +219,6 @@ class MainActivity : Activity() {
             is Sub.Places -> s.items.let { list ->
                 HudView.Menu(list.map { it.name + distText(it.distance) }, selected, title = "즐겨찾기 · ${s.category}", note = list.getOrNull(selected)?.address ?: "", hint = hint)
             }
-            is Sub.Mode -> HudView.Menu(listOf("도보로 안내", "대중교통으로 안내"), selected, title = s.fav.name, note = s.fav.address, hint = hint)
         }
     }
 
@@ -231,18 +229,16 @@ class MainActivity : Activity() {
             Input.BACK -> when (s) {
                 Sub.Loading, is Sub.Categories -> { sub = null; hud.menu = HudView.Menu(menuLabels(), Item.FAVORITES.ordinal) }
                 is Sub.Places -> showSub(Sub.Categories(s.data), s.parentSel)
-                is Sub.Mode -> showSub(s.places, s.parentSel)
             }
             Input.SELECT -> when (s) {
                 Sub.Loading -> {}
                 is Sub.Categories -> s.data.categories.getOrNull(m.selected)?.let { showSub(Sub.Places(s.data, it, m.selected), 0) }
-                is Sub.Places -> s.items.getOrNull(m.selected)?.let { showSub(Sub.Mode(s, it, m.selected), 0) }
-                is Sub.Mode -> {
-                    val mode = if (m.selected == 1) "transit" else "walk"
-                    client.send(JSONObject().put("type", "go").put("id", s.fav.id).put("mode", mode))
+                // 서버가 기존 길찾기와 같은 규칙으로: 직선 800m 안이면 도보, 아니면 대중교통 후보(안경에서 고름), 대중교통이 없으면 도보
+                is Sub.Places -> s.items.getOrNull(m.selected)?.let { fav ->
+                    client.send(JSONObject().put("type", "go").put("id", fav.id).put("mode", "auto"))
                     sub = null
                     hud.menu = null
-                    showNotice("${s.fav.name} 경로 찾는 중…")
+                    showNotice("${fav.name} 경로 찾는 중…")
                 }
             }
         }

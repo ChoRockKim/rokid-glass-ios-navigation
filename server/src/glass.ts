@@ -104,7 +104,8 @@ export function startGlassServer(opts: {
       else if (msg.type === "sync") send(ws, nav.snapshot());
       else if (msg.type === "favorites") send(ws, opts.favorites?.list() ?? { type: "favorites", categories: [], items: [] });
       else if (msg.type === "go" && opts.favorites) {
-        const mode = msg.mode === "transit" ? "transit" : "walk";
+        // "auto"(0.3.12+): 대중교통 흐름으로 보내면 가까우면(직선 800m) 도보, 아니면 대중교통 후보 → 안경에서 고름
+        const mode = msg.mode === "walk" ? "walk" : "transit";
         void opts.favorites
           .go(String(msg.id), mode)
           .catch((e) => {

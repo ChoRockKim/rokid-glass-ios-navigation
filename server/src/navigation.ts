@@ -115,7 +115,7 @@ export type GlassInput =
   /** 안경 메뉴: 즐겨찾기 목록 요청 */
   | { type: "favorites" }
   /** 안경 메뉴: 즐겨찾기로 안내 시작 */
-  | { type: "go"; id: string; mode: "walk" | "transit" }
+  | { type: "go"; id: string; mode: "walk" | "transit" | "auto" }
   /** 선택지(choose)에 대한 답. index -1 = 취소 */
   | { type: "chosen"; id: number; index: number }
   /** 안경 앱이 navigator.geolocation 으로 받은 위치 (AIUI). 출처(안경/폰)는 미확인 */
