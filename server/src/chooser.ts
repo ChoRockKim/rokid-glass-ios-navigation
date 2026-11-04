@@ -3,8 +3,11 @@
 // (2026-11-04 응답을 20초 미뤘더니 폰 쪽에서 "네트워크 연결이 유실되었습니다" — 서버는 200 을 보냈지만 폰이 받지 못함)
 // 선택지를 띄울 수 있는 화면(안경 APK 0.3.4+, WebSocket ?choose=1)이 없거나 시간이 지나면 null → 호출한 쪽이 기본값(가장 가까운 곳)을 쓴다.
 
+import type { RouteCard } from "./transit.js";
+
 export type ChooseMessage =
-  | { type: "choose"; id: number; title: string; items: string[]; timeoutSec: number }
+  /** routes 가 있으면 대중교통 후보: 안경은 카드(총 시간 + 구간 막대)로 그린다. items 는 예전 화면용 한 줄 */
+  | { type: "choose"; id: number; title: string; items: string[]; timeoutSec: number; routes?: RouteCard[] }
   | { type: "choose-done"; id: number }
   | { type: "notice"; text: string };
 
@@ -28,14 +31,14 @@ export class Chooser {
   }
 
   /** 고른 번호(0부터), 취소면 -1, 화면이 없거나 시간이 지나면 null */
-  ask(title: string, items: string[]): Promise<number | null> {
+  ask(title: string, items: string[], routes?: RouteCard[]): Promise<number | null> {
     if (!this.available || items.length === 0) return Promise.resolve(null);
     this.finish(null); // 이전 질문은 기본값으로 끝낸다
     const id = ++this.seq;
     return new Promise((resolve) => {
       const timer = setTimeout(() => this.finish(null), this.timeoutMs);
       this.pending = { id, resolve, timer };
-      for (const send of this.screens) send({ type: "choose", id, title, items, timeoutSec: Math.round(this.timeoutMs / 1000) });
+      for (const send of this.screens) send({ type: "choose", id, title, items, timeoutSec: Math.round(this.timeoutMs / 1000), ...(routes ? { routes } : {}) });
     });
   }
 

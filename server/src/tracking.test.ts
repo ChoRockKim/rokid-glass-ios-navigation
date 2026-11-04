@@ -107,3 +107,23 @@ test("parsePositions: Overland / 단순 / OwnTracks", () => {
   assert.deepEqual(parsePositions({ _type: "status", iOS: {} }), []); // OwnTracks 상태 메시지
   assert.deepEqual(parsePositions({ locations: [] }), []);
 });
+
+test("Navigator: 수동 다음/이전은 내 위치를 옮기지 않고 focus 로 미리보기", () => {
+  let now = 0;
+  const nav = new Navigator(() => now);
+  const pos: { lon: number; lat: number; focus?: [number, number] | null; estimated?: boolean }[] = [];
+  nav.onMap((m) => { if (m.type === "map-pos") pos.push(m); });
+  nav.start({ from: place, to: place, route, startedBy: "t" });
+  assert.equal(pos.at(-1)!.estimated, true); // 시작점은 추정
+  nav.updatePositions([{ lon: 127, lat: 37.5005, acc: 5, ts: 1 }]);
+  const real = pos.at(-1)!;
+  assert.ok(!real.estimated && !real.focus);
+  nav.move(1);
+  const preview = pos.at(-1)!;
+  assert.deepEqual([preview.lon, preview.lat], [real.lon, real.lat]); // 나는 그대로
+  assert.ok(preview.focus); // 지도만 다음 단계로
+  const m = nav.snapshot();
+  assert.ok(m.type === "step" && m.index === 1 && m.remaining === null); // 미리보는 단계는 전체 거리
+  nav.move(-1); // 실제 단계로 돌아오면 미리보기 끝
+  assert.equal(pos.at(-1)!.focus, null);
+});

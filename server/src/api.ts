@@ -13,12 +13,13 @@
 // POST /nav       {"action":"next"|"prev"|"stop"}
 // GET  /status
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { KakaoError, searchPlaces, type Place, type PlaceCandidate } from "./kakao.js";
+import { KakaoError, addressAt, searchAddress, searchPlaces, type Place, type PlaceCandidate } from "./kakao.js";
+import { DEFAULT_CATEGORY, type Favorites } from "./favorites.js";
 import { messageFor, formatMinutes, type Navigator, type Position } from "./navigation.js";
 import { formatDistance } from "./guide.js";
 import { planRoute, resolvePlace, type PlaceInput } from "./planner.js";
 import type { Chooser } from "./chooser.js";
-import { buildTransitGuide, pendingTransit, planTransit, speakOption, summarizeOption, type TransitPlan } from "./transit.js";
+import { buildTransitGuide, pendingTransit, planTransit, routeCard, speakOption, summarizeOption, type TransitPlan } from "./transit.js";
 import { distanceM } from "./guide.js";
 import { safeEqual, tokenFrom } from "./auth.js";
 import type { Pairing } from "./pairing.js";
@@ -41,6 +42,8 @@ export interface ApiDeps {
   pairing?: Pairing;
   /** 목적지 후보가 여럿이면 안경에서 고르게 한다 (없으면 가장 가까운 곳) */
   chooser?: Chooser;
+  /** 즐겨찾기 (없으면 /favorites 끔) */
+  favorites?: Favorites;
 }
 
 class HttpError extends Error {
@@ -107,7 +110,7 @@ export function parsePositions(body: unknown): Position[] | null {
 }
 
 export function createApi(deps: ApiDeps) {
-  const { nav, apiToken, kakaoKey, log, notify, pairing, chooser } = deps;
+  const { nav, apiToken, kakaoKey, log, notify, pairing, chooser, favorites } = deps;
 
   const pt = (p: Place) => ({ lon: p.x, lat: p.y, name: p.name });
   const candLabel = (c: PlaceCandidate) => (c.distance === null ? c.name : `${c.name} · ${formatDistance(c.distance)}`);
@@ -121,8 +124,8 @@ export function createApi(deps: ApiDeps) {
   }
 
   /** 안경에서 고르기. 고른 번호 (시간이 지나면 0 = 첫 번째), 취소면 null */
-  async function pickOnGlasses(title: string, items: string[]): Promise<number | null> {
-    const i = await chooser!.ask(title, items);
+  async function pickOnGlasses(title: string, items: string[], plan?: TransitPlan): Promise<number | null> {
+    const i = await chooser!.ask(title, items, plan?.options.map(routeCard));
     log(`choose: ${title} → ${i === null ? "default" : i === -1 ? "cancel" : `#${i + 1}`}`);
     return i === -1 ? null : (i ?? 0);
   }
@@ -174,6 +177,46 @@ export function createApi(deps: ApiDeps) {
         log(`glasses flow failed: ${e instanceof Error ? e.message : String(e)}`);
         chooser?.notice("경로 찾기 실패");
       });
+  }
+
+  /** 안경 메뉴용 즐겨찾기 목록 (마지막 위치에서 직선거리 포함) */
+  function favoritesForGlasses() {
+    const p = nav.lastKnownPosition;
+    return {
+      type: "favorites" as const,
+      categories: favorites?.categories() ?? [],
+      items: (favorites?.list() ?? []).map((f) => ({
+        id: f.id,
+        name: f.name,
+        category: f.category,
+        address: f.address,
+        distance: p ? Math.round(distanceM([p.lon, p.lat], [f.x, f.y])) : null,
+      })),
+    };
+  }
+
+  /** 안경 메뉴에서 고른 즐겨찾기로 안내 시작 (출발 = 마지막으로 받은 위치). 결과 문장 */
+  async function goFavorite(id: string, mode: "walk" | "transit"): Promise<string> {
+    const fav = favorites?.get(id);
+    if (!fav) return "즐겨찾기를 찾지 못함";
+    const p = nav.lastKnownPosition;
+    if (!p) return "현재 위치 없음 (Overland 확인)";
+    const f: Place = { name: "현재 위치", address: "", x: p.lon, y: p.lat };
+    const t: Place = { name: fav.name, address: fav.address, x: fav.x, y: fav.y };
+    log(`favorite: ${fav.name} (${mode})`);
+    if (mode === "walk") {
+      await startWalk(f, t);
+      return `${fav.name} 도보 안내 시작`;
+    }
+    const plan = await transitOrWalk(f, t);
+    if (typeof plan === "string") {
+      await startWalk(f, t);
+      return `${fav.name} 도보 안내 (${plan.startsWith("가까워") ? "가까움" : "대중교통 없음"})`;
+    }
+    const k = plan.options.length > 1 && chooser?.available ? await pickOnGlasses(`경로 선택 · ${fav.name}`, plan.options.map(summarizeOption), plan) : 0;
+    if (k === null) return "경로 선택 취소";
+    await startTransitOption(plan, k);
+    return `${fav.name} 안내 시작`;
   }
 
   /** 단축어 /transit/select 가 대중교통 후보 대신 받을 답 (도보로 대신 시작했거나 안경에서 고르는 중) */
@@ -281,7 +324,9 @@ export function createApi(deps: ApiDeps) {
       send(res, 200, pairing.status(url.searchParams.get("id") ?? ""));
       return true;
     }
-    if (!["POST /location", "POST /route", "POST /transit", "POST /transit/select", "POST /nav", "GET /status", "POST /pair/approve"].includes(route)) return false;
+    const routes = ["POST /location", "POST /route", "POST /transit", "POST /transit/select", "POST /nav", "GET /status", "POST /pair/approve"];
+    if (favorites) routes.push("GET /favorites", "POST /favorites", "POST /favorites/delete");
+    if (!routes.includes(route)) return false;
 
     const given = tokenFrom(req);
     if (!given || !safeEqual(given, apiToken)) {
@@ -292,6 +337,11 @@ export function createApi(deps: ApiDeps) {
     try {
       if (route === "GET /status") {
         send(res, 200, summary());
+        return true;
+      }
+
+      if (route === "GET /favorites") {
+        send(res, 200, { categories: favorites!.categories(), items: favorites!.list() });
         return true;
       }
 
@@ -368,7 +418,7 @@ export function createApi(deps: ApiDeps) {
               await startWalk(f, t);
               return `${t.name} 도보 안내 시작`;
             }
-            const k = plan.options.length > 1 ? await pickOnGlasses(`경로 선택 · ${t.name}`, plan.options.map(summarizeOption)) : 0;
+            const k = plan.options.length > 1 ? await pickOnGlasses(`경로 선택 · ${t.name}`, plan.options.map(summarizeOption), plan) : 0;
             if (k === null) return null;
             await startTransitOption(plan, k);
             return `${t.name} 안내 시작`;
@@ -432,6 +482,43 @@ export function createApi(deps: ApiDeps) {
         return true;
       }
 
+      if (route === "POST /favorites") {
+        // 별명 + (주소 또는 장소 이름 | 현재 위치 lat/lon) + 카테고리
+        const b = body as Record<string, unknown>;
+        const name = typeof b.name === "string" ? b.name.trim() : "";
+        const query = typeof b.address === "string" ? b.address.trim() : "";
+        const category = typeof b.category === "string" && b.category.trim() ? b.category.trim() : DEFAULT_CATEGORY;
+        if (!name) throw new HttpError(400, "name(별명) is required");
+        let found: Place | null = null;
+        let address = query;
+        if (query) {
+          // 주소로 먼저, 안 되면 장소 이름으로 (마지막 위치 근처 우선)
+          found = await searchAddress(query, kakaoKey);
+          if (!found) {
+            const p = nav.lastKnownPosition;
+            found = (await searchPlaces(query, kakaoKey, p ? { lon: p.lon, lat: p.lat } : undefined))[0] ?? null;
+          }
+          if (!found) throw new HttpError(404, `주소·장소를 찾지 못했습니다: ${query}`);
+        } else {
+          const lat = num(b.lat);
+          const lon = num(b.lon);
+          if (lat === undefined || lon === undefined) throw new HttpError(400, "address 또는 lat/lon 이 필요합니다");
+          address = (await addressAt(lon, lat, kakaoKey)) ?? `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+          found = { name: address, address, x: lon, y: lat };
+        }
+        const fav = favorites!.upsert({ name, category, address, place: found.name, x: found.x, y: found.y });
+        log(`favorite added: ${fav.name} [${fav.category}] ${fav.place}`);
+        send(res, 200, { ok: true, favorite: fav, speech: `${fav.category}에 ${fav.name} 등록. ${fav.place}.` });
+        return true;
+      }
+
+      if (route === "POST /favorites/delete") {
+        const name = String((body as Record<string, unknown>).name ?? "").trim();
+        const gone = name ? favorites!.remove(name) : null;
+        send(res, gone ? 200 : 404, gone ? { ok: true, speech: `${gone.name} 삭제.` } : { error: "없는 즐겨찾기", speech: `${name} 즐겨찾기가 없습니다.` });
+        return true;
+      }
+
       if (route === "POST /pair/approve") {
         const code = String((body as Record<string, unknown>).code ?? "").trim();
         const ok = pairing?.approve(code) ?? false;
@@ -463,5 +550,5 @@ export function createApi(deps: ApiDeps) {
     }
     return false;
   };
-  return Object.assign(handle, { ingest, rerouteNow });
+  return Object.assign(handle, { ingest, rerouteNow, favoritesForGlasses, goFavorite });
 }

@@ -38,6 +38,31 @@ export function summarizeOption(r: TransitRoute, i: number): string {
   return `${head}  ${rides(r).map(rideLabel).join(" / ")}`;
 }
 
+/** 안경 선택 화면용 카드 (네이버 지도처럼 총 시간 + 구간 막대) */
+export interface RouteCard {
+  minutes: number;
+  transfers: number;
+  fare: number | null;
+  walkMinutes: number;
+  legs: { kind: "walk" | "bus" | "subway"; minutes: number; label: string; board: string }[];
+}
+
+export function routeCard(r: TransitRoute): RouteCard {
+  const min = (s: number) => Math.max(1, Math.round(s / 60));
+  return {
+    minutes: min(r.totalTime),
+    transfers: r.transfers,
+    fare: r.fare,
+    walkMinutes: Math.round(r.legs.filter((l) => l.kind === "WALKING").reduce((t, l) => t + l.time, 0) / 60),
+    legs: r.legs.map((l) => ({
+      kind: l.kind === "WALKING" ? "walk" : l.kind === "BUS" ? "bus" : "subway",
+      minutes: min(l.time),
+      label: l.kind === "WALKING" ? "" : l.kind === "BUS" ? `${l.lines[0] ?? "버스"}${l.lines.length > 1 ? ` 외 ${l.lines.length - 1}` : ""}` : (l.lines[0] ?? "지하철"),
+      board: l.kind === "WALKING" ? "" : (l.stops[0] ?? ""),
+    })),
+  };
+}
+
 /** 단축어가 읽어 줄 짧은 문장 */
 export function speakOption(r: TransitRoute, i: number): string {
   return `${i + 1}번, ${Math.round(r.totalTime / 60)}분, ${rides(r)

@@ -31,11 +31,13 @@ export interface ActiveRoute {
   index: number; // guide 기준
   startedBy: string; // Slack user id 또는 "api"
   tracker: RouteTracker;
-  progress: number | null; // 위치 추적 중이면 경로 위 진행 거리(m)
+  progress: number | null; // 위치 추적 중이면 경로 위 진행 거리(m). 수동 다음/이전으로는 바뀌지 않는다
+  realIndex: number | null; // 실제 위치로 본 단계 (index 와 다르면 수동으로 미리 보는 중)
   offRoute: boolean;
   offRouteCount: number; // 연속 이탈 횟수
   lastPosition: Position | null;
-  manualHold: { index: number; until: number } | null;
+  /** 수동으로 고른 단계를 잠시 유지. forward = 실제 단계보다 앞(도착하면 풀림), 아니면 뒤 단계 미리보기 */
+  manualHold: { index: number; until: number; forward: boolean } | null;
 }
 
 /** 안경으로 보내는 메시지. 한 줄만 쓰는 클라이언트는 text, 두 줄이면 line1/line2. */
@@ -81,8 +83,12 @@ export type MapMessage =
       heading: number;
       snapped: boolean;
       next: number | null;
-      /** 실제 위치(폰·안경 GPS)에서 나온 것이면, 그 위치를 받은 지 몇 ms 지났는지. 수동 다음/이전으로 옮긴 것이면 없음 */
+      /** 실제 위치(폰·안경 GPS)에서 나온 것이면, 그 위치를 받은 지 몇 ms 지났는지 */
       fixAge?: number;
+      /** 실제 위치가 아니라 경로 위 추정 지점 (시작점·위치 없이 단계를 넘긴 경우). 화면은 "나"를 그리지 않는다 */
+      estimated?: boolean;
+      /** 수동으로 다른 단계를 미리 보는 중이면 그 단계 시작점 [lon, lat]. 화면은 지도만 거기로 옮기고 "나"는 실제 위치에 */
+      focus?: [number, number] | null;
     }
   | {
       type: "map-roads";
@@ -106,6 +112,10 @@ export type GlassInput =
   | { type: "stop" }
   /** 안경 메뉴: 지금 위치에서 경로 다시 찾기 */
   | { type: "reroute" }
+  /** 안경 메뉴: 즐겨찾기 목록 요청 */
+  | { type: "favorites" }
+  /** 안경 메뉴: 즐겨찾기로 안내 시작 */
+  | { type: "go"; id: string; mode: "walk" | "transit" }
   /** 선택지(choose)에 대한 답. index -1 = 취소 */
   | { type: "chosen"; id: number; index: number }
   /** 안경 앱이 navigator.geolocation 으로 받은 위치 (AIUI). 출처(안경/폰)는 미확인 */
@@ -124,7 +134,8 @@ export function formatMinutes(s: number): string {
 }
 
 function remainingOf(a: ActiveRoute): number | null {
-  if (a.progress === null || a.index >= a.guide.length) return null;
+  // 다른 단계를 미리 보는 중이면 그 단계 전체 거리로 보여 준다
+  if (a.progress === null || a.index >= a.guide.length || a.realIndex !== a.index) return null;
   return Math.max(0, a.tracker.stepEnd[a.index]! - a.progress);
 }
 
@@ -316,7 +327,7 @@ export class Navigator {
     }
     else {
       const p = a.tracker.pointAt(0);
-      if (p) out.push({ type: "map-pos", ...p, snapped: true, next: a.index + 1 < a.guide.length ? a.index + 1 : null });
+      if (p) out.push({ type: "map-pos", ...p, snapped: true, estimated: true, next: a.index + 1 < a.guide.length ? a.index + 1 : null });
     }
     return out;
   }
@@ -330,17 +341,28 @@ export class Navigator {
     };
   }
 
-  /** 진행 거리 기준 내 위치·방향을 미니맵에 알린다. 이탈 중이면 실제 위치 */
+  /** 미리 보는 단계의 시작점 (실제 단계와 같으면 null) */
+  private focusOf(a: ActiveRoute): [number, number] | null {
+    if (a.realIndex === null || a.realIndex === a.index) return null;
+    const step = a.guide[a.index] ?? a.guide[a.guide.length - 1];
+    const pt = a.index < a.guide.length ? step?.points[0] : step?.points[step.points.length - 1];
+    return pt ? [pt[0], pt[1]] : null;
+  }
+
+  /** 진행 거리 기준 내 위치·방향을 미니맵에 알린다. 이탈 중이면 실제 위치. 미리보기 중이면 focus 를 함께 */
   private emitPos(a: ActiveRoute, raw: Position | null) {
     const next = a.index + 1 < a.guide.length ? a.index + 1 : null;
     const fix = raw ? { fixAge: 0 } : {};
+    const focus = this.focusOf(a);
     if (!a.offRoute && a.progress !== null) {
       const p = a.tracker.pointAt(a.progress);
-      if (p) return this.emitMap({ type: "map-pos", ...p, snapped: true, next, ...fix });
+      if (p) return this.emitMap({ type: "map-pos", ...p, snapped: true, next, focus, ...fix });
     }
-    if (raw) {
+    const last = a.lastPosition;
+    const at = raw ?? last;
+    if (at) {
       const heading = (this.lastMapPos?.type === "map-pos" ? this.lastMapPos.heading : 0);
-      this.emitMap({ type: "map-pos", lon: raw.lon, lat: raw.lat, heading, snapped: false, next, ...fix });
+      this.emitMap({ type: "map-pos", lon: at.lon, lat: at.lat, heading, snapped: false, next, focus, ...fix });
     }
   }
 
@@ -370,6 +392,7 @@ export class Navigator {
       index: 0,
       tracker: new RouteTracker(guide),
       progress: null,
+      realIndex: null,
       offRoute: false,
       offRouteCount: 0,
       lastPosition: null,
@@ -379,7 +402,7 @@ export class Navigator {
     this.lastFixAt = null;
     this.emitMap(this.routeMap(this.active));
     const p0 = this.active.tracker.pointAt(0);
-    if (p0) this.emitMap({ type: "map-pos", ...p0, snapped: true, next: guide.length > 1 ? 1 : null });
+    if (p0) this.emitMap({ type: "map-pos", ...p0, snapped: true, estimated: true, next: guide.length > 1 ? 1 : null });
     this.emit();
     this.save();
   }
@@ -391,22 +414,25 @@ export class Navigator {
     this.start({ from, to, route, startedBy });
   }
 
-  /** index는 guide.length 까지 갈 수 있다 (= 도착) */
+  /**
+   * 수동 다음/이전 (안경 쓸기·탭, /nav). index는 guide.length 까지 갈 수 있다 (= 도착).
+   * 위치 추적 중이면 진행 거리(=내 위치)는 그대로 두고 화면만 그 단계를 미리 보여 준다 (map-pos focus).
+   * 앞 단계로 넘긴 것은 실제로 그 단계에 들어서면 풀리고, 뒤 단계 미리보기는 MANUAL_HOLD_MS 뒤에 실제 단계로 돌아온다.
+   */
   move(delta: number) {
     const a = this.active;
     if (!a) return;
     a.index = Math.min(a.guide.length, Math.max(0, a.index + delta));
-    if (a.progress !== null) {
-      // 위치 추적 중이면 진행 거리도 그 단계 시작으로 맞추고, 잠시 위치가 되돌리지 못하게 한다
-      a.progress = a.index < a.guide.length ? a.tracker.stepStart[a.index]! : a.tracker.length;
-      a.manualHold = { index: a.index, until: this.now() + MANUAL_HOLD_MS };
-    }
     a.offRoute = false;
     a.offRouteCount = 0;
+    if (a.realIndex !== null && a.index !== a.realIndex) {
+      a.manualHold = { index: a.index, until: this.now() + MANUAL_HOLD_MS, forward: a.index > a.realIndex };
+    } else a.manualHold = null;
     if (a.progress !== null) this.emitPos(a, null);
     else {
+      // 실제 위치를 모르면 그 단계 시작점을 추정 위치로 (화면은 "나"를 그리지 않음)
       const p = a.index < a.guide.length ? a.tracker.pointAt(a.tracker.stepStart[a.index] ?? 0) : null;
-      if (p) this.emitMap({ type: "map-pos", ...p, snapped: true, next: a.index + 1 < a.guide.length ? a.index + 1 : null });
+      if (p) this.emitMap({ type: "map-pos", ...p, snapped: true, estimated: true, next: a.index + 1 < a.guide.length ? a.index + 1 : null });
     }
     this.emit();
     this.save();
@@ -477,14 +503,14 @@ export class Navigator {
 
     if (!a.offRoute) {
       a.progress = proj.s;
-      let index = a.tracker.stepAt(proj.s, ADVANCE_M);
-      if (a.manualHold) {
-        if (this.now() < a.manualHold.until && index < a.manualHold.index) {
-          index = a.manualHold.index;
-          a.progress = Math.max(a.progress, a.tracker.stepStart[index] ?? a.progress);
-        } else if (this.now() >= a.manualHold.until) {
-          a.manualHold = null;
-        }
+      const real = a.tracker.stepAt(proj.s, ADVANCE_M);
+      a.realIndex = real;
+      let index = real;
+      const hold = a.manualHold;
+      if (hold) {
+        const reached = hold.forward && real >= hold.index;
+        if (this.now() < hold.until && !reached) index = hold.index;
+        else a.manualHold = null;
       }
       a.index = index;
     }

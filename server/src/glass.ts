@@ -5,6 +5,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { GlassInput, Navigator, Position } from "./navigation.js";
 import { safeEqual, tokenFrom } from "./auth.js";
 import { VIEWER_HTML } from "./viewer.js";
+import { PLACES_HTML } from "./places.js";
 import type { RoadFeed } from "./roads.js";
 import type { Ota } from "./ota.js";
 import type { Chooser } from "./chooser.js";
@@ -26,6 +27,8 @@ export function startGlassServer(opts: {
   roads?: RoadFeed;
   /** 안경 앱 OTA (/app/*) */
   ota?: Ota;
+  /** 안경 메뉴 즐겨찾기: 목록, 고른 곳으로 안내 시작(결과 문장) */
+  favorites?: { list: () => unknown; go: (id: string, mode: "walk" | "transit") => Promise<string> };
   /** 목적지 후보 선택지. ?choose=1 로 연결한 화면(안경 APK)에만 띄운다 */
   chooser?: Chooser;
 }): Server {
@@ -43,6 +46,12 @@ export function startGlassServer(opts: {
       // 안경 화면 미리보기 (토큰은 페이지에서 입력, 브라우저에만 저장)
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
       res.end(VIEWER_HTML);
+      return;
+    }
+    if (req.method === "GET" && (pathname === "/places" || pathname === "/places/")) {
+      // 즐겨찾기 관리 (폰 브라우저). 데이터는 /favorites API (API_TOKEN)
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      res.end(PLACES_HTML);
       return;
     }
     if (opts.ota && (await opts.ota.handle(req, res))) return;
@@ -93,7 +102,17 @@ export function startGlassServer(opts: {
       if (msg.type === "next") nav.move(1);
       else if (msg.type === "prev") nav.move(-1);
       else if (msg.type === "sync") send(ws, nav.snapshot());
-      else if (msg.type === "chosen") opts.chooser?.answer(Number(msg.id), Number(msg.index));
+      else if (msg.type === "favorites") send(ws, opts.favorites?.list() ?? { type: "favorites", categories: [], items: [] });
+      else if (msg.type === "go" && opts.favorites) {
+        const mode = msg.mode === "transit" ? "transit" : "walk";
+        void opts.favorites
+          .go(String(msg.id), mode)
+          .catch((e) => {
+            log(`favorite go failed: ${e instanceof Error ? e.message : String(e)}`);
+            return "경로 찾기 실패";
+          })
+          .then((text) => send(ws, { type: "notice", text }));
+      } else if (msg.type === "chosen") opts.chooser?.answer(Number(msg.id), Number(msg.index));
       else if (msg.type === "stop") {
         log("glass: stop");
         nav.stop();

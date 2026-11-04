@@ -104,7 +104,9 @@ export const VIEWER_HTML = `<!doctype html>
     const roadsG = $('roads'), routeG = $('route'), marks = $('marks'), bldgG = $('bldg');
     roadsG.replaceChildren(); routeG.replaceChildren(); marks.replaceChildren(); bldgG.replaceChildren();
     if (!map.pos) return;
-    const P = project(map.pos);
+    // 다른 단계를 미리 보는 중이면(focus) 지도만 그 단계 시작점으로, 나는 실제 위치에 그린다
+    const cam = map.pos.focus ? { ...map.pos, lon: map.pos.focus[0], lat: map.pos.focus[1] } : map.pos;
+    const P = project(cam);
     if (map.roads) {
       // 도로가 주인공: 큰길·일반 도로는 양쪽 가장자리 선 + 속은 아주 얕게 (가장자리 → 검정으로 속 지우기 → 얕은 속 순서라 교차로가 이어진다)
       // 건물: 서버가 감싼 직사각형으로 줄여 보낸 것을 흐린 윤곽만. 안경 앱(HudView)과 같은 값
@@ -133,8 +135,9 @@ export const VIEWER_HTML = `<!doctype html>
         marks.appendChild(el('rect', { x: x - 5, y: y - 5, width: 10, height: 10, transform: 'rotate(45 ' + x + ' ' + y + ')', fill: 'none', stroke: '#00ff66', 'stroke-width': 2 }));
       }
     }
-    // 나: 위를 향한 삼각형 (경로에서 벗어났으면 속이 빈 삼각형)
-    const { cx, cy } = MAP;
+    // 나: 위를 향한 삼각형 (경로에서 벗어났으면 속이 빈 삼각형). 실제 위치가 아니면(estimated) 그리지 않는다
+    if (map.pos.estimated) return;
+    const [cx, cy] = P([map.pos.lon, map.pos.lat]).split(',').map(Number);
     marks.appendChild(el('polygon', { points: cx + ',' + (cy - 11) + ' ' + (cx - 7) + ',' + (cy + 7) + ' ' + cx + ',' + (cy + 3) + ' ' + (cx + 7) + ',' + (cy + 7),
       fill: map.pos.snapped ? '#00ff66' : 'none', stroke: '#00ff66', 'stroke-width': 1.5 }));
   }

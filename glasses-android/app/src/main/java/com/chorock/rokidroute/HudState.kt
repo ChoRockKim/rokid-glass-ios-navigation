@@ -49,6 +49,8 @@ data class HudState(
         "map-pos" -> copy(pos = MapPos(
             lon = m.getDouble("lon"), lat = m.getDouble("lat"), heading = m.getDouble("heading").toFloat(),
             snapped = m.optBoolean("snapped"), next = if (m.isNull("next")) null else m.optInt("next"),
+            estimated = m.optBoolean("estimated"),
+            focus = m.optJSONArray("focus")?.let { doubleArrayOf(it.getDouble(0), it.getDouble(1)) },
         )).let { if (m.has("fixAge")) it.copy(lastFixAt = now - m.optLong("fixAge")) else it }
         "map-roads" -> {
             val lines = m.getJSONArray("lines")
@@ -74,6 +76,18 @@ data class HudState(
 
 data class Segment(val kind: String, val points: List<DoubleArray>) // [lon, lat]
 data class MapRoute(val segments: List<Segment>, val turns: List<DoubleArray>)
-data class MapPos(val lon: Double, val lat: Double, val heading: Float, val snapped: Boolean, val next: Int?)
+/**
+ * estimated: 실제 위치가 아닌 경로 위 추정 지점 (시작점 등) → "나"를 그리지 않음.
+ * focus: 다른 단계를 미리 보는 중이면 그 단계 시작점 [lon, lat] → 지도만 거기로, "나"는 실제 위치에.
+ */
+data class MapPos(
+    val lon: Double, val lat: Double, val heading: Float, val snapped: Boolean, val next: Int?,
+    val estimated: Boolean = false, val focus: DoubleArray? = null,
+) {
+    // DoubleArray 는 내용 비교가 안 돼서 직접 (같은 위치를 다시 받으면 미끄러지기를 다시 시작하지 않게)
+    override fun equals(other: Any?) = other is MapPos && lon == other.lon && lat == other.lat && heading == other.heading &&
+        snapped == other.snapped && next == other.next && estimated == other.estimated && focus.contentEquals(other.focus)
+    override fun hashCode() = arrayOf<Any?>(lon, lat, heading, snapped, next, estimated, focus?.contentHashCode()).contentHashCode()
+}
 /** kinds: major · road · service · path · rail. buildings: 건물 바깥 윤곽 */
 data class MapRoads(val lines: List<List<DoubleArray>>, val major: List<Boolean>, val kinds: List<String> = emptyList(), val buildings: List<List<DoubleArray>> = emptyList())

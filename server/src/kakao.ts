@@ -84,9 +84,16 @@ const norm = (t: string) => t.replace(/\s+/g, "").toLowerCase();
  */
 export function pickCandidates(query: string, nearby: PlaceCandidate[]): PlaceCandidate[] {
   const q = norm(query);
+  const prefixed = nearby.filter((c) => norm(c.name).startsWith(q));
+  // 검색어 뒤가 띄어쓰기로 끊기는 이름("왕십리역 2호선", "맥도날드 외대점")이 있으면 그것만.
+  // "왕십리역요진와이하우스오피스텔", "경희대학교병원 소화기센터" 처럼 검색어가 더 긴 단어의 앞부분일 뿐인 곳은 뺀다
+  const word = query.trim().replace(/\s+/g, " ");
+  const bounded = prefixed.filter((c) => {
+    const n = c.name.trim().replace(/\s+/g, " ");
+    return n === word || n.startsWith(word + " ");
+  });
   const out: PlaceCandidate[] = [];
-  for (const c of nearby) {
-    if (!norm(c.name).startsWith(q)) continue;
+  for (const c of bounded.length ? bounded : prefixed) {
     const dup = out.some((o) => {
       const dy = (o.y - c.y) * 110_540;
       const dx = (o.x - c.x) * 111_320 * Math.cos((o.y * Math.PI) / 180);
@@ -126,8 +133,35 @@ export async function searchPlaces(query: string, key: string, near?: { lon: num
   // 정확도 1등도 20km 안이면 후보에 끼워 넣는다 (예: 경희대학교병원 옆에서 "경희대학교" → 병원 시설 + 서울캠퍼스)
   const pool = top && top.distance !== null && top.distance <= 20_000 ? [...nearby, top].sort((x, y) => (x.distance ?? 0) - (y.distance ?? 0)) : nearby;
   const picked = pickCandidates(query, pool);
+  // 지점(…점)이 아닌 곳(역·학교 등)이면 카카오 정확도 1등을 맨 위로: "회기역" → 회기역 1호선이 공영주차장보다 먼저
+  const i = top ? picked.findIndex((c) => c.name === top.name) : -1;
+  if (i > 0 && !picked.some((c) => /점$/.test(c.name.trim()))) picked.unshift(...picked.splice(i, 1));
   if (picked.length) return picked;
   return top ? [top] : [];
+}
+
+/** 주소(도로명·지번)로 좌표. 없으면 null */
+export async function searchAddress(query: string, key: string): Promise<Place | null> {
+  const url = new URL("/v2/local/search/address.json", BASE);
+  url.searchParams.set("query", query);
+  url.searchParams.set("size", "1");
+  const body = (await getJson(url, key)) as {
+    documents?: { address_name: string; road_address?: { address_name: string; building_name?: string } | null; x: string; y: string }[];
+  };
+  const d = body.documents?.[0];
+  if (!d) return null;
+  const addr = d.road_address?.address_name || d.address_name;
+  return { name: d.road_address?.building_name || addr, address: addr, x: Number(d.x), y: Number(d.y) };
+}
+
+/** 좌표 → 주소 문자열 (도로명 우선). 못 찾으면 null */
+export async function addressAt(lon: number, lat: number, key: string): Promise<string | null> {
+  const url = new URL("/v2/local/geo/coord2address.json", BASE);
+  url.searchParams.set("x", String(lon));
+  url.searchParams.set("y", String(lat));
+  const body = (await getJson(url, key)) as { documents?: { address?: { address_name: string } | null; road_address?: { address_name: string } | null }[] };
+  const d = body.documents?.[0];
+  return d?.road_address?.address_name || d?.address?.address_name || null;
 }
 
 interface RawWalk {

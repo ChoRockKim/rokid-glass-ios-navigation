@@ -51,6 +51,63 @@ class HudViewSnapshotTest {
         paparazzi.snapshot(v, "09_menu")
     }
 
+    /** 지도 화면 탭 → 간소 화면 (왼쪽에 경로·나만, 배경선 없음). 걷는 중 / 버스 정류장 */
+    @Test
+    fun compactStyle() {
+        val f = fixture()
+        for ((c, name) in listOf(2 to "walking", 4 to "bus_stop")) {
+            val v = HudView(paparazzi.context) { null }
+            v.clock = { T0 + 5_000 }
+            v.viewStyle = HudView.ViewStyle.COMPACT
+            v.state = stateUpto(f, f.getJSONArray("checkpoints").getJSONObject(c).getInt("upto"))
+            v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
+            paparazzi.snapshot(v, "12_compact_$name")
+        }
+    }
+
+    /** 걷는 중에 링으로 다음 단계를 미리 봄: 지도는 다음 회전 지점으로, 나는 실제 위치 그대로 */
+    @Test
+    fun previewNextStep() {
+        val f = fixture()
+        var state = stateUpto(f, f.getJSONArray("checkpoints").getJSONObject(2).getInt("upto"))
+        val pos = state.pos!!
+        val turn = state.route!!.turns[2]
+        val m = JSONObject().put("type", "map-pos").put("lon", pos.lon).put("lat", pos.lat).put("heading", pos.heading.toDouble())
+            .put("snapped", true).put("next", 2).put("focus", org.json.JSONArray().put(turn[0]).put(turn[1]))
+        state = state.apply(m, T0)
+        val v = HudView(paparazzi.context) { null }
+        v.clock = { T0 + 5_000 }
+        v.state = state
+        v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
+        paparazzi.snapshot(v, "13_preview_next_step")
+    }
+
+    /** 메뉴 → 즐겨찾기 → 카테고리 */
+    @Test
+    fun favorites() {
+        val v = HudView(paparazzi.context) { null }
+        v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
+        v.menu = HudView.Menu(listOf("집 (1)", "회사 (2)", "맛집 (4)", "기타 (1)"), selected = 2, title = "즐겨찾기", hint = "쓸기 이동 · 탭 선택 · 뒤로 이전")
+        paparazzi.snapshot(v, "14_favorites_categories")
+        v.menu = HudView.Menu(listOf("단골 국밥 · 320m", "맥도날드 외대점 · 768m", "회기 파전골목 · 1.1km", "을지로 노가리 · 9.4km"), selected = 0,
+            title = "즐겨찾기 · 맛집", note = "서울 동대문구 회기로 123", hint = "쓸기 이동 · 탭 선택 · 뒤로 이전")
+        paparazzi.snapshot(v, "15_favorites_places")
+    }
+
+    /** 대중교통 경로 후보 카드 (회기역 → 왕십리역, 실제 카카오 결과로 만든 routes.json). 1번 / 3번 선택 */
+    @Test
+    fun routeCards() {
+        val j = JSONObject(javaClass.classLoader!!.getResource("routes.json")!!.readText())
+        val items = j.getJSONArray("items").let { a -> List(a.length()) { a.getString(it) } }
+        val routes = j.getJSONArray("routes").let { a -> List(a.length()) { HudView.RouteCard.fromJson(a.getJSONObject(it)) } }
+        for (sel in listOf(0, 3)) {
+            val v = HudView(paparazzi.context) { null }
+            v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
+            v.menu = HudView.Menu(items, sel, title = j.getString("title"), hint = "쓸기 이동 · 탭 선택 · 뒤로 취소 · 60초 뒤 맨 위", routes = routes)
+            paparazzi.snapshot(v, "16_route_cards_$sel")
+        }
+    }
+
     /** 폰에서 "맥도날드"로 시작 → 안경에서 지점 고르기 (서버 /route 를 실제 카카오로 돌려 받은 목록) */
     @Test
     fun chooseDestination() {

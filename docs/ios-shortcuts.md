@@ -57,6 +57,19 @@
 
 서버 쪽은 실제 카카오 API 와 가짜 안경 WebSocket 으로 확인 (도보·대중교통·취소·가까움).
 
+## 즐겨찾기 (2026-11-04 추가)
+등록·삭제는 폰에서, 고르기는 안경 메뉴 → 즐겨찾기 → 카테고리 → 장소 → 도보/대중교통 (출발은 Overland 가 마지막으로 보낸 위치).
+- **브라우저**: `SERVER/places` (처음 한 번 API 토큰 입력, 그 브라우저에만 저장). 별명·주소(또는 장소 이름)·카테고리 입력, "지금 위치로 추가", 삭제.
+- **단축어 "즐겨찾기 추가"**:
+  1. `입력 요청` 텍스트 → 별명
+  2. `입력 요청` 텍스트 → 주소 또는 장소 이름
+  3. `입력 요청` 텍스트 → 카테고리 (비우면 "기타")
+  4. `URL 내용 가져오기`: `SERVER/favorites?token=TOKEN`, POST, JSON `name`, `address`, `category`
+  5. `사전 값 가져오기` 키 `speech` → `텍스트 말하기` ("맛집에 단골 국밥 등록. …")
+  - 지금 있는 곳을 등록하려면 2 대신 `현재 위치 가져오기` 후 JSON 에 `lat`, `lon` (주소는 서버가 좌표로 찾음).
+- API: `GET /favorites`, `POST /favorites {name, address | lat+lon, category}` (같은 별명은 덮어씀), `POST /favorites/delete {name}`. 주소는 카카오 주소 검색 → 안 되면 장소 검색.
+- 서버 쪽은 실제 카카오 API 로 확인. 안경 메뉴는 화면 미리보기로만 확인 (실기 미확인).
+
 ## 서버 응답 예 (`POST /route`, curl 로 확인)
 ```json
 {"active":true,"from":"현재 위치","to":"왕십리역 2호선","distance":5378,"minutes":86,"total":14,

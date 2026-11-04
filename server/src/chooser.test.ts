@@ -36,3 +36,11 @@ test("pickCandidates: 검색어로 시작하는 지점만 가까운 순, 150m �
   assert.deepEqual(pickCandidates("강남역", nearby), []); // → 정확도 1등으로
   assert.deepEqual(pickCandidates("맥 도날드", nearby).length, 2); // 띄어쓰기 무시
 });
+
+test("pickCandidates: 검색어 뒤가 띄어쓰기인 이름 우선", () => {
+  const at = (name: string, dx: number): PlaceCandidate => ({ name, address: "", x: 127.03 + dx / 88_000, y: 37.56, distance: dx });
+  const nearby = [at("왕십리역요진와이하우스오피스텔", 0), at("왕십리역 2호선", 400), at("왕십리역 5호선", 450), at("경희대학교병원 소화기센터", 900), at("경희대학교 서울캠퍼스", 1300)];
+  assert.deepEqual(pickCandidates("왕십리역", nearby).map((c) => c.name), ["왕십리역 2호선"]); // 5호선은 50m → 같은 곳
+  assert.deepEqual(pickCandidates("경희대학교", nearby).map((c) => c.name), ["경희대학교 서울캠퍼스"]);
+  assert.deepEqual(pickCandidates("왕십리역요진", nearby).map((c) => c.name), ["왕십리역요진와이하우스오피스텔"]); // 붙여 쓴 검색어는 그대로
+});
