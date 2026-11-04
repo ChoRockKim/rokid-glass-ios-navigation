@@ -18,7 +18,9 @@ npx tsx scripts/smoke-kakao.ts 강남역 선릉역   # 카카오 실 API 확인
 ```
 `.env` 는 자동으로 읽지 않는다. `node --env-file=.env` 를 쓰거나 셸에서 export 할 것.
 
-## Slack 명령
+## Slack 명령 (선택)
+`SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` 이 둘 다 있을 때만 켜진다 (`src/slack.ts`). 지금은 iPhone 단축어가 같은 일을 하므로 없어도 된다.
+
 | 명령 | 동작 |
 |---|---|
 | `/route 강남역 > 선릉역` | 경로 시작 (`->`, `→`, `강남역에서 선릉역` 도 됨) |
