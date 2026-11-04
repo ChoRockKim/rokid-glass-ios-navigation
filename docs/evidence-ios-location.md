@@ -65,3 +65,28 @@
 ## 종합 시사점
 - 수초 단위 연속 위치 전송은 OwnTracks(iOS)와 Overland 모두 설계상 보장하지 않는다. OwnTracks iOS Move 기본값은 100 m / 300 s이다.
 - OwnTracks는 HTTP Basic 인증 JSON POST, Overland는 Bearer 토큰 + GeoJSON 배치 POST이므로 서버 수신부가 서로 다르다.
+
+## 7) 추가 검증 (2026-11-04, 앱 소스 직접 확인)
+owntracks.org, overland.p3k.app 은 이 클라우드 세션에서 접속이 막혀 있어 공개 GitHub 소스를 받아 읽었다. **소스 읽기이며 iPhone 실측은 아니다.**
+
+### OwnTracks iOS (owntracks/ios @bbb7b76, 2026-10-17)
+- `LocationManager.m` Move 모드: `distanceFilter = kCLDistanceFilterNone`, `desiredAccuracy = kCLLocationAccuracyBest`, `pausesLocationUpdatesAutomatically = NO`, `allowsBackgroundLocationUpdates = TRUE`, `startUpdatingLocation`. 즉 GPS 는 연속으로 켜져 있다.
+- 발행 조건(`didUpdateLocations`): Move 모드에서 마지막 발행 위치로부터 `minDist` 이상 움직였으면 **매 측정마다** 발행. 별도로 `minTime` 초 주기 타이머가 현재 위치를 발행(trigger `t`).
+- `setMinDist`/`setMinTime` 에 하한 검사가 없다. 설정값(`mindist_preference`, `mintime_preference`)을 그대로 쓴다.
+- HTTP 모드 기본값(`HTTP.plist`): mindist 200, mintime 180. booklet 의 100 m / 300 s 와 다르다 (모드·버전 차이로 추정).
+- 판단(추론): mindist 를 10 m 로 두면 보행 속도(약 1.3 m/s) 기준 약 8초마다 발행될 것. 실측 필요. 메인테이너 발언으로 "Move 모드는 몇 시간이면 배터리를 다 쓴다"는 GitHub 이슈 인용이 검색 결과에 있었다(원문 미확인).
+
+### Overland iOS (aaronpk/Overland-iOS @38f1b34, 2026-11-01)
+- 전송 간격 선택지(`GLManager.m`): 1s, 5s, 10s, 15s, 30s, 1m, 2m, 5m, 10m, 30m, off.
+- 정확도 선택지에 `nav`(`kCLLocationAccuracyBestForNavigation`), `best` 존재. `pausesLocationUpdatesAutomatically` 는 설정값.
+- 전송 시점: `didUpdateLocations` 안에서 `sendQueueIfTimeElapsed` 호출. 위치 갱신이 들어올 때마다 "마지막 전송 후 간격이 지났으면 배치 전송". 위치 갱신이 백그라운드에서 계속 들어오는 한 백그라운드에서도 간격대로 보낼 것으로 본다(추론).
+- 앞 절의 "고정 주기 불가" 문구는 수집 주기 얘기이고, 전송 간격은 1초까지 고를 수 있다.
+
+### 단축어
+- 반복(Repeat) + 대기(Wait) 루프로 주기 전송하는 방법: 커뮤니티 보고상 화면이 꺼지고 충전 중이 아니면 Wait 가 몇 분으로 늘어나고, 다른 앱으로 가면 iOS 가 종료할 수 있다. 연속 추적용으로는 부적합. 출처: https://talk.automators.fm/t/tip-running-shortcuts-consistently-for-a-long-time/19013 , https://adamtow.github.io/repeatcuts
+- 수동 1회 전송(현재 위치 가져오기 → URL 내용 가져오기 POST)은 가능. 트리거로 동작 버튼·뒷면 탭·위젯을 쓸 수 있다는 건 일반 지식이며 이 문서에 근거 인용 없음.
+
+### 종합 (추론)
+- 연속 위치: Overland(전송 1~5s, 정확도 best) 또는 OwnTracks Move(mindist 10, mintime 30). 둘 다 실측 필요.
+- 단축어: 연속 추적 대신 "지금 위치로 맞추기" 수동 버튼으로 쓰는 게 맞다.
+- 어느 쪽이든 폰이 서버에 닿아야 하므로 서버 공개 주소(배포)가 먼저 필요하다.
