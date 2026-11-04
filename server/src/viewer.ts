@@ -1,5 +1,5 @@
 // 브라우저용 안경 화면. GET /viewer
-// 페이지(앱) 전체가 480x282 dp 안경 화면이다. 바깥 UI 없음. 배경색은 칠하지 않는다(투명).
+// 페이지(앱) 전체가 480x282 dp 안경 화면이다. 바깥 UI 없음. 화면은 칠하지 않고 얇은 테두리만, 페이지 바탕은 검정.
 // 안경 앱과 같은 WebSocket(/glass)에 붙어 같은 메시지를 보여 준다.
 //
 // 조작: 화면 탭/클릭·Enter·↓ = 다음, ↑ = 이전
@@ -15,9 +15,10 @@ export const VIEWER_HTML = `<!doctype html>
 <style>
   :root { --g: #00ff66; --dim: #4da86c; }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; width: 480px; height: 282px; overflow: hidden; background: transparent; color: var(--g);
+  html, body { margin: 0; padding: 0; width: 480px; height: 282px; overflow: hidden; background: #000; color: var(--g);
     font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; -webkit-user-select: none; user-select: none; }
-  #app { position: relative; width: 480px; height: 282px; padding: 14px 18px; overflow: hidden; cursor: pointer; background: transparent; }
+  /* 화면(앱)은 칠하지 않고 얇은 테두리만. 페이지 바탕은 검정(투과형 안경에서는 검정 = 안 보임) */
+  #app { position: relative; width: 480px; height: 282px; padding: 14px 18px; overflow: hidden; cursor: pointer; background: transparent; border: 1px solid var(--dim); border-radius: 12px; }
   .top, .bottom { display: flex; justify-content: space-between; font-size: 16px; height: 22px; color: var(--dim); }
   .bottom { position: absolute; left: 18px; right: 18px; bottom: 10px; font-size: 14px; height: 18px; }
   .line1 { margin-top: 18px; font-size: 30px; line-height: 38px; max-height: 76px; overflow: hidden; font-weight: 700; word-break: keep-all; }
