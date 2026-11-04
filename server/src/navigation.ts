@@ -239,16 +239,17 @@ export class Navigator {
     return messageFor(this.active, this.now());
   }
 
-  /** 지금 보여 주는 단계 또는 바로 다음 단계 중 아직 안 탄 버스·지하철 (실시간 폴링 대상) */
+  /** 지금부터 처음 타게 될(아직 안 탄) 버스·지하철 (실시간 폴링 대상). 정류장까지 걷는 동안에도 미리 조회한다 */
   upcomingRide(): { index: number; step: GuideStep } | null {
     const a = this.active;
     if (!a) return null;
-    for (const i of [a.index, a.index + 1]) {
-      const step = a.guide[i];
-      if (!step?.ride) continue;
+    for (let i = a.index; i < a.guide.length; i++) {
+      const step = a.guide[i]!;
+      if (!step.ride) continue;
       const start = a.tracker.stepStart[i] ?? 0;
       const boarded = i === a.index && a.progress !== null && a.progress - start > BOARDED_M;
-      if (!boarded) return { index: i, step };
+      if (boarded) continue; // 지금 타고 있는 구간 다음의 탑승(환승)을 본다
+      return { index: i, step };
     }
     return null;
   }

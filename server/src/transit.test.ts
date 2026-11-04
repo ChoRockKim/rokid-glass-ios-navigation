@@ -44,6 +44,16 @@ test("실시간 문구 파싱", () => {
   assert.equal(arrivalText({ line: "421", etaSec: 30, message: "" }), "421 곧 도착");
 });
 
+test("upcomingRide: 정류장까지 걷는 단계가 여러 개여도 첫 탑승 구간을 찾는다", () => {
+  const nav = new Navigator(() => 0);
+  const legs = parseTransit(raw).routes[0]!.legs; // SUBWAY, WALKING, BUS
+  const walk = { ...rideStep(legs[0]!), ride: undefined, turn: "walk" as const, points: legs[1]!.points };
+  const guide: GuideStep[] = [walk, { ...walk }, rideStep(legs[2]!)];
+  const place = { name: "x", address: "", x: 0, y: 0 };
+  nav.start({ from: place, to: place, route: { totalDistance: 1, totalTime: 1, steps: [] }, guide, mode: "transit", startedBy: "t" });
+  assert.equal(nav.upcomingRide()?.index, 2);
+});
+
 test("Navigator: 버스 구간 대기 → 실시간 표시 → 탑승 중", () => {
   let now = 0;
   const nav = new Navigator(() => now);
@@ -69,7 +79,7 @@ test("Navigator: 버스 구간 대기 → 실시간 표시 → 탑승 중", () =
   assert.equal(m.type === "step" && m.ride?.boarded, true);
   assert.equal(m.type === "step" && m.line1, "🚌 421 탑승 중");
   assert.ok(m.type === "step" && /^성동구청 하차 · 약 \d정거장$/.test(m.line2), m.type === "step" ? m.line2 : "");
-  assert.equal(nav.upcomingRide(), null); // 탄 뒤에는 폴링 안 함
+  assert.equal(nav.upcomingRide(), null); // 탄 뒤에는 (다음 환승이 없으면) 폴링 안 함
 
   // 오래된 실시간 정보는 안 씀
   now += 100_000;
