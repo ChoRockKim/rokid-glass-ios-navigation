@@ -36,7 +36,8 @@ export const VIEWER_HTML = `<!doctype html>
 <body>
 <div id="app" class="idle">
   <svg id="map" viewBox="0 0 480 282" xmlns="http://www.w3.org/2000/svg">
-    <g id="roads" fill="none" stroke="#2b7a45" stroke-linecap="round" stroke-linejoin="round" opacity="0.55"></g>
+    <g id="bldg" fill="#00ff66" fill-opacity="0.03" stroke="#2b7a45" stroke-opacity="0.45" stroke-width="0.8"></g>
+    <g id="roads" fill="none" stroke-linecap="round" stroke-linejoin="round"></g>
     <g id="route" fill="none" stroke-linecap="round" stroke-linejoin="round"></g>
     <g id="marks"></g>
   </svg>
@@ -99,13 +100,24 @@ export const VIEWER_HTML = `<!doctype html>
     };
   }
   function drawMap() {
-    const roadsG = $('roads'), routeG = $('route'), marks = $('marks');
-    roadsG.replaceChildren(); routeG.replaceChildren(); marks.replaceChildren();
+    const roadsG = $('roads'), routeG = $('route'), marks = $('marks'), bldgG = $('bldg');
+    roadsG.replaceChildren(); routeG.replaceChildren(); marks.replaceChildren(); bldgG.replaceChildren();
     if (!map.pos) return;
     const P = project(map.pos);
     if (map.roads) {
-      map.roads.lines.forEach((line, i) => {
-        roadsG.appendChild(el('polyline', { points: line.map(P).join(' '), 'stroke-width': map.roads.major[i] ? 2.2 : 1 }));
+      // 칠한 면은 최소한으로 (투과형 안경에서 앞을 가리지 않게). 건물: 3% 면 + 얇은 윤곽 / 도로: 아주 얕은 띠 / 보행로·철도: 점선
+      for (const b of map.roads.buildings || []) bldgG.appendChild(el('polygon', { points: b.map(P).join(' ') }));
+      const STYLE = {
+        major: { stroke: '#00ff66', 'stroke-width': 7, opacity: 0.2 },
+        road: { stroke: '#00ff66', 'stroke-width': 4.5, opacity: 0.15 },
+        service: { stroke: '#00ff66', 'stroke-width': 2.5, opacity: 0.12 },
+        path: { stroke: '#3a9a5c', 'stroke-width': 1.2, 'stroke-dasharray': '2 3', opacity: 0.8 },
+        rail: { stroke: '#3a9a5c', 'stroke-width': 1, 'stroke-dasharray': '6 3', opacity: 0.6 },
+      };
+      const order = ['service', 'road', 'major', 'path', 'rail'];
+      const kinds = map.roads.kinds || map.roads.major.map((m) => (m ? 'major' : 'road'));
+      for (const k of order) map.roads.lines.forEach((line, i) => {
+        if (kinds[i] === k) roadsG.appendChild(el('polyline', { points: line.map(P).join(' '), ...STYLE[k] }));
       });
       $('attrib').textContent = '© OpenStreetMap';
     }

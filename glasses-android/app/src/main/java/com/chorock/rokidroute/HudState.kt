@@ -42,7 +42,14 @@ data class HudState(
         "map-roads" -> {
             val lines = m.getJSONArray("lines")
             val major = m.getJSONArray("major")
-            copy(roads = MapRoads(List(lines.length()) { i -> points(lines.getJSONArray(i)) }, List(major.length()) { major.getBoolean(it) }))
+            val kinds = m.optJSONArray("kinds")
+            val bl = m.optJSONArray("buildings")
+            copy(roads = MapRoads(
+                lines = List(lines.length()) { i -> points(lines.getJSONArray(i)) },
+                major = List(major.length()) { major.getBoolean(it) },
+                kinds = if (kinds != null) List(kinds.length()) { kinds.getString(it) } else List(major.length()) { if (major.getBoolean(it)) "major" else "road" },
+                buildings = if (bl != null) List(bl.length()) { i -> points(bl.getJSONArray(i)) } else emptyList(),
+            ))
         }
         else -> this
     }
@@ -57,4 +64,5 @@ data class HudState(
 data class Segment(val kind: String, val points: List<DoubleArray>) // [lon, lat]
 data class MapRoute(val segments: List<Segment>, val turns: List<DoubleArray>)
 data class MapPos(val lon: Double, val lat: Double, val heading: Float, val snapped: Boolean, val next: Int?)
-data class MapRoads(val lines: List<List<DoubleArray>>, val major: List<Boolean>)
+/** kinds: major · road · service · path · rail. buildings: 건물 바깥 윤곽 */
+data class MapRoads(val lines: List<List<DoubleArray>>, val major: List<Boolean>, val kinds: List<String> = emptyList(), val buildings: List<List<DoubleArray>> = emptyList())

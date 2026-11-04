@@ -73,7 +73,18 @@ export type MapMessage =
       turns: [number, number][]; // 각 단계 시작점 (단계 index 와 같은 순서)
     }
   | { type: "map-pos"; lon: number; lat: number; heading: number; snapped: boolean; next: number | null }
-  | { type: "map-roads"; lines: [number, number][][]; major: boolean[] };
+  | {
+      type: "map-roads";
+      lines: [number, number][][];
+      /** 예전 클라이언트(안경 APK 0.2.4 이하)용. kinds 의 "major" 와 같음 */
+      major: boolean[];
+      /** 도로 종류: major(간선) · road(일반·골목) · service(진입로) · path(보행로·계단) · rail(철도) */
+      kinds: RoadKind[];
+      /** 건물 바깥 윤곽 (닫힌 다각형) */
+      buildings: [number, number][][];
+    };
+
+export type RoadKind = "major" | "road" | "service" | "path" | "rail";
 
 /** 안경에서 받는 메시지 */
 export type GlassInput =

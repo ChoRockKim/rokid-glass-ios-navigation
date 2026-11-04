@@ -60,7 +60,11 @@ class MainActivity : Activity() {
                 }
             },
             onMessage = ::onServerMessage,
-            onStatus = { hud.state = hud.state.copy(status = it) },
+            onStatus = {
+                hud.state = hud.state.copy(status = it)
+                // 상태 문구가 비면 서버와 연결된 것 (ServerClient.onOpen 에서 "" 를 보낸다)
+                hud.device = hud.device.copy(server = it.isEmpty() && hud.pairCode == null)
+            },
             onPairCode = { hud.pairCode = it },
         )
         val dm = resources.displayMetrics
@@ -71,13 +75,46 @@ class MainActivity : Activity() {
         hud.postDelayed({ hud.debug = null }, 10_000)
     }
 
+    // ── 배터리 · 네트워크 (오른쪽 아래 표시) ──
+    private val batteryReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: Context, i: android.content.Intent) {
+            val level = i.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1)
+            val scale = i.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100)
+            val st = i.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+            val charging = st == android.os.BatteryManager.BATTERY_STATUS_CHARGING || st == android.os.BatteryManager.BATTERY_STATUS_FULL
+            if (level >= 0) hud.device = hud.device.copy(battery = level * 100 / scale.coerceAtLeast(1), charging = charging)
+        }
+    }
+    private val connectivity by lazy { getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager }
+    private val netCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+        override fun onCapabilitiesChanged(n: android.net.Network, caps: android.net.NetworkCapabilities) = updateNetwork()
+        override fun onLost(n: android.net.Network) = updateNetwork()
+    }
+
+    private fun updateNetwork() {
+        val caps = connectivity.getNetworkCapabilities(connectivity.activeNetwork)
+        val name = when {
+            caps == null -> "연결 없음"
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_BLUETOOTH) -> "블루투스"
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> "셀룰러"
+            else -> "네트워크"
+        }
+        hud.post { hud.device = hud.device.copy(network = name) }
+    }
+
     override fun onResume() {
         super.onResume()
+        registerReceiver(batteryReceiver, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+        runCatching { connectivity.registerDefaultNetworkCallback(netCallback) }
+        updateNetwork()
         heading.start()
         client.start()
     }
 
     override fun onPause() {
+        runCatching { unregisterReceiver(batteryReceiver) }
+        runCatching { connectivity.unregisterNetworkCallback(netCallback) }
         client.stop()
         heading.stop()
         super.onPause()

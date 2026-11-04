@@ -4,7 +4,7 @@
 import { fetch } from "undici";
 import { dispatcher } from "./proxy.js";
 import { distanceM } from "./guide.js";
-import type { MapMessage, Navigator } from "./navigation.js";
+import type { MapMessage, Navigator, RoadKind } from "./navigation.js";
 import { VectorTile } from "@mapbox/vector-tile";
 import { PbfReader } from "pbf";
 
@@ -24,25 +24,55 @@ function tileXY(lon: number, lat: number, z: number): [number, number] {
 }
 
 /** 벡터 타일(pbf)에서 도로 선만 뽑는다. bbox 밖 선은 버린다 */
-export function roadsFromTile(buf: Uint8Array, x: number, y: number, z: number, bbox: [number, number, number, number]): { lines: [number, number][][]; major: boolean[] } {
+/** OpenMapTiles transportation class → 그리기 종류 */
+export function omtKind(cls: string): RoadKind | null {
+  if (["motorway", "trunk", "primary", "secondary"].includes(cls)) return "major";
+  if (["tertiary", "minor", "busway", "unclassified", "residential"].includes(cls)) return "road";
+  if (["service", "track", "raceway"].includes(cls)) return "service";
+  if (cls === "path") return "path"; // 보행로·자전거길·계단·광장 (subclass 로 구분됨)
+  if (["rail", "transit"].includes(cls)) return "rail";
+  return null; // ferry 등
+}
+
+type TileRoads = { lines: [number, number][][]; major: boolean[]; kinds: RoadKind[]; buildings: [number, number][][] };
+
+/** 벡터 타일(pbf)에서 도로(종류별)와 건물 윤곽을 뽑는다. bbox 밖은 버린다. 터널(지하철 등)은 뺀다 */
+export function roadsFromTile(buf: Uint8Array, x: number, y: number, z: number, bbox: [number, number, number, number]): TileRoads {
   const tile = new VectorTile(new PbfReader(buf));
-  const layer = tile.layers["transportation"];
-  const lines: [number, number][][] = [];
-  const major: boolean[] = [];
-  if (!layer) return { lines, major };
+  const out: TileRoads = { lines: [], major: [], kinds: [], buildings: [] };
   const [w, s, e, n] = bbox;
-  for (let i = 0; i < layer.length; i++) {
-    const f = layer.feature(i);
+  const inBox = (ring: [number, number][]) => ring.some(([lo, la]) => lo >= w && lo <= e && la >= s && la <= n);
+  const q = (ring: [number, number][]) => ring.map(([lo, la]) => [Math.round(lo * 1e6) / 1e6, Math.round(la * 1e6) / 1e6] as [number, number]);
+
+  const tr = tile.layers["transportation"];
+  for (let i = 0; tr && i < tr.length; i++) {
+    const f = tr.feature(i);
     if (f.type !== 2) continue; // LineString
+    if (f.properties["brunnel"] === "tunnel") continue;
+    const kind = omtKind(String(f.properties["class"] ?? ""));
+    if (!kind) continue;
     const gj = f.toGeoJSON(x, y, z) as { geometry: { type: string; coordinates: unknown } };
     const parts = (gj.geometry.type === "MultiLineString" ? gj.geometry.coordinates : [gj.geometry.coordinates]) as [number, number][][];
     for (const part of parts) {
-      if (!part.some(([lo, la]) => lo >= w && lo <= e && la >= s && la <= n)) continue;
-      lines.push(part.map(([lo, la]) => [Math.round(lo * 1e6) / 1e6, Math.round(la * 1e6) / 1e6]));
-      major.push(OMT_MAJOR.has(String(f.properties["class"] ?? "")));
+      if (!inBox(part)) continue;
+      out.lines.push(q(part));
+      out.kinds.push(kind);
+      out.major.push(kind === "major");
     }
   }
-  return { lines, major };
+
+  const bl = tile.layers["building"];
+  for (let i = 0; bl && i < bl.length; i++) {
+    const f = bl.feature(i);
+    if (f.type !== 3) continue; // Polygon
+    const gj = f.toGeoJSON(x, y, z) as { geometry: { type: string; coordinates: unknown } };
+    const polys = (gj.geometry.type === "MultiPolygon" ? gj.geometry.coordinates : [gj.geometry.coordinates]) as [number, number][][][];
+    for (const poly of polys) {
+      const outer = poly[0];
+      if (outer && outer.length >= 3 && inBox(outer)) out.buildings.push(q(outer));
+    }
+  }
+  return out;
 }
 
 // 공개 Overpass 인스턴스. 앞에서부터 시도하고, 성공한 곳을 다음에 먼저 쓴다.
@@ -80,12 +110,16 @@ export function parseOverpass(body: unknown): Roads {
   }[];
   const lines: [number, number][][] = [];
   const major: boolean[] = [];
+  const kinds: RoadKind[] = [];
   for (const e of els) {
     if (e.type !== "way" || !e.geometry || e.geometry.length < 2) continue;
+    const hw = e.tags?.highway ?? "";
+    const kind: RoadKind = MAJOR.has(hw) && hw !== "tertiary" ? "major" : ["footway", "path", "steps", "pedestrian", "cycleway"].includes(hw) ? "path" : hw === "service" ? "service" : "road";
     lines.push(e.geometry.map((g) => [Math.round(g.lon * 1e6) / 1e6, Math.round(g.lat * 1e6) / 1e6]));
-    major.push(MAJOR.has(e.tags?.highway ?? ""));
+    kinds.push(kind);
+    major.push(kind === "major");
   }
-  return { type: "map-roads", lines, major };
+  return { type: "map-roads", lines, major, kinds, buildings: [] };
 }
 
 export class RoadFeed {
@@ -138,12 +172,14 @@ export class RoadFeed {
     const bbox: [number, number, number, number] = [lon - dLon, lat - dLat, lon + dLon, lat + dLat];
     const [x0, y0] = tileXY(bbox[0], bbox[3], TILE_Z);
     const [x1, y1] = tileXY(bbox[2], bbox[1], TILE_Z);
-    const out: Roads = { type: "map-roads", lines: [], major: [] };
+    const out: Roads = { type: "map-roads", lines: [], major: [], kinds: [], buildings: [] };
     for (let x = x0; x <= x1; x++) {
       for (let y = y0; y <= y1; y++) {
         const r = roadsFromTile(await this.tile(x, y), x, y, TILE_Z, bbox);
         out.lines.push(...r.lines);
         out.major.push(...r.major);
+        out.kinds.push(...r.kinds);
+        out.buildings.push(...r.buildings);
       }
     }
     return out;
@@ -217,7 +253,7 @@ export class RoadFeed {
       }
       this.center = [lon, lat];
       this.latest = roads;
-      this.log(`roads: ${roads.lines.length} lines around ${lat.toFixed(4)},${lon.toFixed(4)} via ${via} (tiles cached ${this.tiles.size})`);
+      this.log(`roads: ${roads.lines.length} lines, ${roads.buildings.length} buildings around ${lat.toFixed(4)},${lon.toFixed(4)} via ${via} (tiles cached ${this.tiles.size})`);
       for (const fn of this.listeners) fn(roads);
     } catch (e) {
       this.log(`roads 실패: ${why(e)}`);

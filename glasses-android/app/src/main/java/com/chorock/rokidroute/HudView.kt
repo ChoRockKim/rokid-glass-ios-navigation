@@ -35,6 +35,11 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     var pairCode: String? = null
         set(value) { field = value; invalidate() }
 
+    /** 오른쪽 아래 기기 상태: 배터리 %(null 이면 모름), 충전 중, 네트워크 이름, 서버 연결 */
+    data class Device(val battery: Int? = null, val charging: Boolean = false, val network: String = "", val server: Boolean = false)
+    var device = Device()
+        set(value) { field = value; invalidate() }
+
     /** 실기 확인용 한 줄 (왼쪽 아래) */
     var debug: String? = null
         set(value) { field = value; invalidate() }
@@ -48,7 +53,24 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     private val tiny = TextPaint(small).apply { textSize = 12f }
     private val big = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = green; textSize = 22f; typeface = Typeface.DEFAULT_BOLD; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
     private val mid = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = green; textSize = 17f; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
-    private val roadPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = road; alpha = 140; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
+    private val pathColor = Color.parseColor("#3a9a5c")
+    private fun stroke(c: Int, w: Float, a: Int, dash: FloatArray? = null) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; color = c; alpha = a; strokeWidth = w; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
+        if (dash != null) pathEffect = DashPathEffect(dash, 0f)
+    }
+    // 도로: 종류별 굵기의 아주 얕은 띠 (투과형 안경에서 칠한 면이 넓으면 앞을 가리므로 최소한으로)
+    // 보행로·철도: 점선. 서버 /viewer 와 같은 값
+    private val roadStyle = mapOf(
+        "major" to stroke(green, 7f, 51),
+        "road" to stroke(green, 4.5f, 38),
+        "service" to stroke(green, 2.5f, 31),
+        "path" to stroke(pathColor, 1.2f, 204, floatArrayOf(2f, 3f)),
+        "rail" to stroke(pathColor, 1f, 153, floatArrayOf(6f, 3f)),
+    )
+    private val roadOrder = listOf("service", "road", "major", "path", "rail")
+    // 건물: 아주 흐린 면 + 얇은 윤곽
+    private val bldgFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = green; alpha = 8 }
+    private val bldgLine = stroke(road, 0.8f, 115)
     private val routePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = green; alpha = 140; strokeWidth = 4f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
     private val ridePaint = Paint(routePaint).apply { strokeWidth = 4.5f; pathEffect = DashPathEffect(floatArrayOf(2f, 7f), 0f) }
     private val markStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = green; strokeWidth = 2f }
@@ -131,11 +153,41 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         val bottom = H - 10f
         val left = debug ?: if (s.roads != null && pairCode == null) "© OpenStreetMap" else ""
         canvas.drawText(left, 18f, bottom, tiny)
-        canvas.drawText(s.status, W - 18f - tiny.measureText(s.status), bottom, tiny)
+        drawDeviceStatus(canvas, bottom, s.status)
         canvas.restore()
 
         // 위치가 미끄러지는 중이거나 센서 방향을 쓰면 계속 다시 그림
         if (glideFrom != null || (sensor != null && pos != null)) postInvalidateOnAnimation()
+    }
+
+    /** 오른쪽 아래: [연결 오류 문구]  Wi-Fi ●  ▭82% (오른쪽에서 왼쪽으로 쌓는다) */
+    private fun drawDeviceStatus(canvas: Canvas, baseline: Float, status: String) {
+        var x = W - 18f
+        val dv = device
+        // 배터리: 테두리 + 남은 만큼 채움 + 꼭지, 오른쪽에 %
+        dv.battery?.let { pct ->
+            val label = "$pct%" + if (dv.charging) "+" else ""
+            x -= tiny.measureText(label)
+            canvas.drawText(label, x, baseline, tiny)
+            x -= 4f
+            val bw = 16f; val bh = 8f; val top = baseline - bh - 1f
+            val body = RectF(x - bw - 2f, top, x - 2f, top + bh)
+            val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f; color = dim }
+            val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = if (pct <= 15) Color.WHITE else dim }
+            canvas.drawRoundRect(body, 1.5f, 1.5f, outline)
+            canvas.drawRect(body.left + 1.5f, body.top + 1.5f, body.left + 1.5f + (bw - 3f) * pct / 100f, body.bottom - 1.5f, fill)
+            canvas.drawRect(body.right, body.top + 2.5f, body.right + 2f, body.bottom - 2.5f, fill.apply { color = dim })
+            x = body.left - 8f
+        }
+        // 네트워크 이름 + 서버 연결 점
+        if (dv.network.isNotEmpty()) {
+            val dot = if (dv.server) "●" else "○"
+            val label = "${dv.network} $dot"
+            x -= tiny.measureText(label)
+            canvas.drawText(label, x, baseline, tiny)
+            x -= 8f
+        }
+        if (status.isNotEmpty()) canvas.drawText(status, x - tiny.measureText(status), baseline, tiny)
     }
 
     private fun drawWrapped(canvas: Canvas, text: String, paint: TextPaint, top: Float, maxLines: Int): Float {
@@ -174,9 +226,15 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         canvas.save()
         canvas.clipRect(1f, 1f, W - 1f, H - 1f)
         state.roads?.let { r ->
-            r.lines.forEachIndexed { i, line ->
-                roadPaint.strokeWidth = if (r.major.getOrElse(i) { false }) 2.2f else 1f
-                canvas.drawPath(path(line), roadPaint)
+            for (b in r.buildings) {
+                val p = path(b).apply { close() }
+                canvas.drawPath(p, bldgFill)
+                canvas.drawPath(p, bldgLine)
+            }
+            val kinds = r.kinds.ifEmpty { r.major.map { if (it) "major" else "road" } }
+            for (k in roadOrder) {
+                val paint = roadStyle.getValue(k)
+                r.lines.forEachIndexed { i, line -> if (kinds.getOrNull(i) == k) canvas.drawPath(path(line), paint) }
             }
         }
         state.route?.let { r ->

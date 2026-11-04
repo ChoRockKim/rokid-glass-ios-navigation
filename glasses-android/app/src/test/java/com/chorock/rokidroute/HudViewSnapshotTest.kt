@@ -47,6 +47,7 @@ class HudViewSnapshotTest {
             for (i in 0 until cp.getInt("upto")) state = state.apply(msgs.getJSONObject(i))
             val v = HudView(paparazzi.context) { null }
             v.state = state
+            v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
             // 파일 이름은 영문 (한글은 깨짐). 라벨은 flow.json 의 checkpoints 순서와 같다
             paparazzi.snapshot(v, "%02d_%s".format(c + 1, NAMES.getOrElse(c) { "step" }))
         }
@@ -69,6 +70,7 @@ class HudViewSnapshotTest {
             for (i in 0 until upto) state = state.apply(msgs.getJSONObject(i))
             val hud = HudView(paparazzi.context) { null }
             hud.state = state
+            hud.device = HudView.Device(battery = 12, charging = false, network = "Wi-Fi", server = false)
             val root = android.widget.FrameLayout(paparazzi.context).apply { setBackgroundColor(android.graphics.Color.BLACK) }
             root.addView(hud, android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL))
             paparazzi.snapshot(root, "glasses_480x640_hdpi")
