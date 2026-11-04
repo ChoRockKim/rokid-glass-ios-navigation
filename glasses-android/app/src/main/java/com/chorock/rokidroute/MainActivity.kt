@@ -156,8 +156,32 @@ class MainActivity : Activity() {
             }
         }
         hud.state = next
-        // 메뉴 "경로 다시 찾기" 결과 (이 안경에만 온다)
-        if (m.optString("type") == "notice") showNotice(m.optString("text"))
+        when (m.optString("type")) {
+            // 메뉴 "경로 다시 찾기" 결과 (이 안경에만 온다)
+            "notice" -> showNotice(m.optString("text"))
+            // 폰에서 길안내를 시작했는데 목적지 후보가 여럿 (예: 맥도날드 지점들). 고를 때까지 폰 단축어가 기다린다
+            "choose" -> {
+                val items = m.getJSONArray("items").let { a -> List(a.length()) { a.getString(it) } }
+                choosing = m.getInt("id")
+                hud.menu = HudView.Menu(
+                    items, title = m.optString("title", "선택"),
+                    note = "${m.optInt("timeoutSec", 40)}초 안에 안 고르면 가장 가까운 곳",
+                    hint = "쓸기 이동 · 탭 선택 · 뒤로 취소",
+                )
+            }
+            // 시간이 지났거나 다른 화면에서 골랐다
+            "choose-done" -> if (choosing == m.optInt("id")) { choosing = null; hud.menu = null }
+        }
+    }
+
+    /** 지금 띄운 선택지 번호 (서버 choose id). null 이면 일반 메뉴 */
+    private var choosing: Int? = null
+
+    private fun answerChoice(id: Int, index: Int, label: String?) {
+        client.send(JSONObject().put("type", "chosen").put("id", id).put("index", index))
+        choosing = null
+        hud.menu = null
+        showNotice(if (label == null) "목적지 선택 취소" else "선택: $label")
     }
 
     private val clearNotice = Runnable { hud.notice = null }
@@ -197,6 +221,17 @@ class MainActivity : Activity() {
 
     fun handle(input: Input) {
         val m = hud.menu
+        val chooseId = choosing
+        if (m != null && chooseId != null) {
+            val n = m.items.size
+            when (input) {
+                Input.NEXT -> hud.menu = m.copy(selected = (m.selected + 1) % n)
+                Input.PREV -> hud.menu = m.copy(selected = (m.selected - 1 + n) % n)
+                Input.SELECT -> answerChoice(chooseId, m.selected, m.items[m.selected].substringBefore(" · "))
+                Input.BACK -> answerChoice(chooseId, -1, null)
+            }
+            return
+        }
         if (m == null) {
             // 길안내 화면: 탭·앞으로 = 다음 단계, 뒤로 쓸기 = 이전, 뒤로가기 = 메인 화면
             when (input) {

@@ -7,6 +7,7 @@ import { safeEqual, tokenFrom } from "./auth.js";
 import { VIEWER_HTML } from "./viewer.js";
 import type { RoadFeed } from "./roads.js";
 import type { Ota } from "./ota.js";
+import type { Chooser } from "./chooser.js";
 
 export function startGlassServer(opts: {
   port: number;
@@ -25,6 +26,8 @@ export function startGlassServer(opts: {
   roads?: RoadFeed;
   /** 안경 앱 OTA (/app/*) */
   ota?: Ota;
+  /** 목적지 후보 선택지. ?choose=1 로 연결한 화면(안경 APK)에만 띄운다 */
+  chooser?: Chooser;
 }): Server {
   const { port, token, nav, log, api } = opts;
   const onPositions = opts.onPositions ?? ((p: Position[]) => nav.updatePositions(p));
@@ -70,7 +73,9 @@ export function startGlassServer(opts: {
     log(`glass connected (${req.socket.remoteAddress}), clients=${wss.clients.size}`);
     send(ws, nav.snapshot());
     // 미니맵 메시지는 ?map=1 로 연결한 화면(/viewer)에만. 안경 앱(AIUI)은 모르는 type 을 "경로 없음"으로 처리하기 때문
-    const wantsMap = new URL(req.url ?? "/", "http://localhost").searchParams.get("map") === "1";
+    const q = new URL(req.url ?? "/", "http://localhost").searchParams;
+    const wantsMap = q.get("map") === "1";
+    const detach = q.get("choose") === "1" ? opts.chooser?.attach((m) => send(ws, m)) : undefined;
     if (wantsMap) {
       mapClients.add(ws);
       for (const m of nav.mapSnapshot()) send(ws, m);
@@ -88,6 +93,7 @@ export function startGlassServer(opts: {
       if (msg.type === "next") nav.move(1);
       else if (msg.type === "prev") nav.move(-1);
       else if (msg.type === "sync") send(ws, nav.snapshot());
+      else if (msg.type === "chosen") opts.chooser?.answer(Number(msg.id), Number(msg.index));
       else if (msg.type === "stop") {
         log("glass: stop");
         nav.stop();
@@ -101,6 +107,7 @@ export function startGlassServer(opts: {
     });
     ws.on("close", () => {
       mapClients.delete(ws);
+      detach?.();
       log(`glass disconnected, clients=${wss.clients.size}`);
     });
   });

@@ -85,7 +85,14 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         set(value) { field = value; invalidate() }
 
     /** 메인 화면(메뉴). null 이면 길안내 화면 */
-    data class Menu(val items: List<String>, val selected: Int = 0, val note: String = "")
+    data class Menu(
+        val items: List<String>,
+        val selected: Int = 0,
+        val note: String = "",
+        /** 위 줄 (없으면 "길안내 · v버전") */
+        val title: String? = null,
+        val hint: String = "쓸기 이동 · 탭 선택 · 뒤로 닫기",
+    )
     var menu: Menu? = null
         set(value) { field = value; invalidate() }
 
@@ -257,7 +264,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
 
     /** 메인 화면: 제목·버전, 항목(선택된 것만 밝게, ▶ 표시), 아래 안내 문구 */
     private fun drawMenu(canvas: Canvas, m: Menu) {
-        canvas.drawText("길안내 · v${BuildConfig.VERSION_NAME}", 18f, 14f + 13f, small)
+        canvas.drawText(m.title ?: "길안내 · v${BuildConfig.VERSION_NAME}", 18f, 14f + 13f, small)
         // 항목이 7개라 안내 글씨(17)로 27 간격. 선택한 것만 굵고 밝게
         var y = 14f + 13f + 31f
         m.items.forEachIndexed { i, item ->
@@ -270,7 +277,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         mid.typeface = Typeface.DEFAULT
         if (m.note.isNotEmpty()) drawWrapped(canvas, m.note, small.let { TextPaint(it).apply { color = green; textSize = 15f } }, y - 14f, 1)
         val bottom = H - 10f
-        canvas.drawText("쓸기 이동 · 탭 선택 · 뒤로 닫기", 18f, bottom, tiny)
+        canvas.drawText(m.hint, 18f, bottom, tiny)
         drawDeviceStatus(canvas, bottom, "")
     }
 

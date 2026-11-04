@@ -181,6 +181,7 @@ export const VIEWER_HTML = `<!doctype html>
     ws.onmessage = (e) => {
       let m; try { m = JSON.parse(e.data); } catch (err) { return; }
       if (onMapMsg(m)) return;
+      if (m.type === 'notice' || m.type === 'choose' || m.type === 'choose-done') return; // 안경 APK 전용
       if (m.type === 'idle') { map.route = null; map.pos = null; redraw(); }
       show(m);
     };

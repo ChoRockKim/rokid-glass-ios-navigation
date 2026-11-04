@@ -2,7 +2,7 @@
 // 카카오 대중교통 응답에는 출발지→첫 정류장, 마지막 정류장→도착지 도보가 없어서 도보 API 로 채운다.
 import { transitRoutes, walkRoute, type LonLat, type Place, type TransitLeg, type TransitRoute, type WalkRoute } from "./kakao.js";
 import { buildGuide, formatDistance, line2For, type GuideStep } from "./guide.js";
-import { resolvePlace, type PlaceInput } from "./planner.js";
+import { resolvePair, type ChoosePlace, type PlaceInput } from "./planner.js";
 import { distanceM } from "./guide.js";
 
 export interface TransitPlan {
@@ -17,8 +17,8 @@ const MAX_OPTIONS = 5;
 /** 이보다 짧은 앞뒤 도보는 붙이지 않는다 */
 const MIN_WALK_M = 30;
 
-export async function planTransit(from: PlaceInput, to: PlaceInput, key: string): Promise<TransitPlan> {
-  const [f, t] = await Promise.all([resolvePlace(from, key), resolvePlace(to, key)]);
+export async function planTransit(from: PlaceInput, to: PlaceInput, key: string, choose?: ChoosePlace): Promise<TransitPlan> {
+  const [f, t] = await resolvePair(from, to, key, choose);
   const { routes, landingUrl } = await transitRoutes(f, t, key);
   // 카카오 순서를 존중하되 시간순으로 상위 몇 개만
   const options = [...routes].sort((a, b) => a.totalTime - b.totalTime).slice(0, MAX_OPTIONS);

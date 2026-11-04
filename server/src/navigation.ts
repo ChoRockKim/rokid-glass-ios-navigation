@@ -106,6 +106,8 @@ export type GlassInput =
   | { type: "stop" }
   /** 안경 메뉴: 지금 위치에서 경로 다시 찾기 */
   | { type: "reroute" }
+  /** 선택지(choose)에 대한 답. index -1 = 취소 */
+  | { type: "chosen"; id: number; index: number }
   /** 안경 앱이 navigator.geolocation 으로 받은 위치 (AIUI). 출처(안경/폰)는 미확인 */
   | { type: "position"; lat: number; lon: number; acc?: number; ts?: number };
 

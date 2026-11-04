@@ -64,6 +64,66 @@ export async function searchPlace(query: string, key: string): Promise<Place | n
   };
 }
 
+/** 검색 후보. distance 는 기준 위치에서 m (기준이 없으면 null) */
+export interface PlaceCandidate extends Place {
+  distance: number | null;
+}
+
+/** 이 거리 안의 후보는 같은 곳으로 본다 (역 출구·호선, 같은 건물) */
+const SAME_PLACE_M = 150;
+const MAX_CANDIDATES = 5;
+
+const norm = (t: string) => t.replace(/\s+/g, "").toLowerCase();
+
+/**
+ * 목적지 후보.
+ * 기준 위치(near)가 있으면 가까운 순(20km 안)으로 찾고, 이름이 검색어로 시작하는 곳만 남긴다
+ * (예: "맥도날드" → 맥도날드 외대점·전농점…). 150m 안에 붙은 것은 하나로 친다.
+ * 그런 곳이 없으면 카카오 정확도 1등 하나 (예: "강남역" → 강남역 2호선. 가까운 순이면 "강남교자 뚝섬역점" 같은 것이 먼저 나온다).
+ * 2026-11-04 회기역 기준으로 실제 호출해 확인한 동작에 맞춘 규칙.
+ */
+export function pickCandidates(query: string, nearby: PlaceCandidate[]): PlaceCandidate[] {
+  const q = norm(query);
+  const out: PlaceCandidate[] = [];
+  for (const c of nearby) {
+    if (!norm(c.name).startsWith(q)) continue;
+    const dup = out.some((o) => {
+      const dy = (o.y - c.y) * 110_540;
+      const dx = (o.x - c.x) * 111_320 * Math.cos((o.y * Math.PI) / 180);
+      return Math.hypot(dx, dy) < SAME_PLACE_M;
+    });
+    if (!dup) out.push(c);
+    if (out.length >= MAX_CANDIDATES) break;
+  }
+  return out;
+}
+
+type RawDoc = { place_name: string; road_address_name?: string; address_name?: string; x: string; y: string; distance?: string };
+const toCandidate = (d: RawDoc): PlaceCandidate => ({
+  name: d.place_name,
+  address: d.road_address_name || d.address_name || "",
+  x: Number(d.x),
+  y: Number(d.y),
+  distance: d.distance ? Number(d.distance) : null,
+});
+
+export async function searchPlaces(query: string, key: string, near?: { lon: number; lat: number }): Promise<PlaceCandidate[]> {
+  if (near) {
+    const url = new URL("/v2/local/search/keyword.json", BASE);
+    url.searchParams.set("query", query);
+    url.searchParams.set("x", String(near.lon));
+    url.searchParams.set("y", String(near.lat));
+    url.searchParams.set("radius", "20000");
+    url.searchParams.set("sort", "distance");
+    url.searchParams.set("size", "15");
+    const body = (await getJson(url, key)) as { documents?: RawDoc[] };
+    const picked = pickCandidates(query, (body.documents ?? []).map(toCandidate));
+    if (picked.length) return picked;
+  }
+  const top = await searchPlace(query, key);
+  return top ? [{ ...top, distance: null }] : [];
+}
+
 interface RawWalk {
   status?: string;
   route?: {

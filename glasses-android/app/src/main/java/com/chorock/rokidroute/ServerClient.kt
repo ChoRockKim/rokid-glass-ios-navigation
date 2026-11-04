@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
 /**
  * 서버 연결.
  * - 토큰이 없으면 페어링: POST /pair/request → 화면에 코드 → GET /pair/status 를 2초마다 → 토큰 저장
- * - 토큰이 있으면 wss://…/glass?map=1&token=… 로 연결, 끊기면 2~30초 백오프 재연결
+ * - 토큰이 있으면 wss://…/glass?map=1&choose=1 로 연결 (choose=1: 목적지 후보 선택지를 받는다), 끊기면 2~30초 백오프 재연결
  * 콜백은 모두 메인 스레드에서 부른다.
  */
 class ServerClient(
@@ -110,7 +110,7 @@ class ServerClient(
         if (!running) return
         val token = tokenStore.get() ?: return requestPair()
         val wsBase = base.replaceFirst("https://", "wss://").replaceFirst("http://", "ws://")
-        val req = Request.Builder().url("$wsBase/glass?map=1").header("Authorization", "Bearer $token").build()
+        val req = Request.Builder().url("$wsBase/glass?map=1&choose=1").header("Authorization", "Bearer $token").build()
         onStatus("연결 중…")
         ws = http.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) = main.post {

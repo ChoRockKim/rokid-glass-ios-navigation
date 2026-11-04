@@ -51,6 +51,18 @@ class HudViewSnapshotTest {
         paparazzi.snapshot(v, "09_menu")
     }
 
+    /** 폰에서 "맥도날드"로 시작 → 안경에서 지점 고르기 (서버 /route 를 실제 카카오로 돌려 받은 목록) */
+    @Test
+    fun chooseDestination() {
+        val v = HudView(paparazzi.context) { null }
+        v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
+        v.menu = HudView.Menu(
+            listOf("맥도날드 외대점 · 768m", "맥도날드 전농점 · 1.3km", "맥도날드 중랑점 · 1.6km", "맥도날드 종암SK DT점 · 2.0km", "맥도날드 장안사거리점 · 2.3km"),
+            selected = 1, title = "목적지 선택 · 맥도날드", note = "40초 안에 안 고르면 가장 가까운 곳", hint = "쓸기 이동 · 탭 선택 · 뒤로 취소",
+        )
+        paparazzi.snapshot(v, "11_choose_destination")
+    }
+
     /** 폰 위치가 1분 넘게 안 옴 + 지도 끄기 + 새 버전 표시 */
     @Test
     fun staleLocationTextOnly() {

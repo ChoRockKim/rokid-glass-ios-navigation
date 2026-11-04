@@ -16,7 +16,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { KakaoError } from "./kakao.js";
 import { messageFor, formatMinutes, type Navigator, type Position } from "./navigation.js";
 import { formatDistance } from "./guide.js";
-import { planRoute, type PlaceInput } from "./planner.js";
+import { ChoiceCancelled, planRoute, type ChoosePlace, type PlaceInput } from "./planner.js";
+import type { Chooser } from "./chooser.js";
 import { buildTransitGuide, pendingTransit, planTransit, selectTransit, speakOption, summarizeOption } from "./transit.js";
 import { safeEqual, tokenFrom } from "./auth.js";
 import type { Pairing } from "./pairing.js";
@@ -35,6 +36,8 @@ export interface ApiDeps {
   notify?: (text: string) => void;
   /** 안경 앱 페어링 (없으면 /pair/* 끔) */
   pairing?: Pairing;
+  /** 목적지 후보가 여럿이면 안경에서 고르게 한다 (없으면 가장 가까운 곳) */
+  chooser?: Chooser;
 }
 
 class HttpError extends Error {
@@ -101,7 +104,19 @@ export function parsePositions(body: unknown): Position[] | null {
 }
 
 export function createApi(deps: ApiDeps) {
-  const { nav, apiToken, kakaoKey, log, notify, pairing } = deps;
+  const { nav, apiToken, kakaoKey, log, notify, pairing, chooser } = deps;
+
+  /** 후보 여럿 → 안경에 "맥도날드 외대점 · 770m" 목록. 안경이 없거나 시간이 지나면 가장 가까운 곳 */
+  const choosePlace: ChoosePlace = async (query, candidates) => {
+    if (!chooser) return candidates[0]!;
+    const items = candidates.map((c) => (c.distance === null ? c.name : `${c.name} · ${formatDistance(c.distance)}`));
+    log(`choose: ${query} → ${candidates.length} candidates (glasses ${chooser.available ? "on" : "off"})`);
+    const i = await chooser.ask(`목적지 선택 · ${query}`, items);
+    if (i === -1) throw new ChoiceCancelled();
+    const picked = candidates[i ?? 0] ?? candidates[0]!;
+    log(`choose: ${i === null ? "default" : `#${i + 1}`} ${picked.name}`);
+    return picked;
+  };
   let lastReroute = 0;
   let rerouting = false;
 
@@ -246,7 +261,7 @@ export function createApi(deps: ApiDeps) {
         }
         if (!from) throw new HttpError(400, "from 또는 lat/lon 이 필요합니다 (받은 위치도 없음)");
 
-        const planned = await planRoute(from, to, kakaoKey);
+        const planned = await planRoute(from, to, kakaoKey, choosePlace);
         nav.start({ ...planned, startedBy: "api" });
         const a = nav.current!;
         log(`api route: ${planned.from.name} -> ${planned.to.name}, ${a.guide.length} steps`);
@@ -271,7 +286,7 @@ export function createApi(deps: ApiDeps) {
           else if (nav.lastKnownPosition) from = { lat: nav.lastKnownPosition.lat, lon: nav.lastKnownPosition.lon };
         }
         if (!from) throw new HttpError(400, "from 또는 lat/lon 이 필요합니다");
-        const plan = await planTransit(from, to, kakaoKey);
+        const plan = await planTransit(from, to, kakaoKey, choosePlace);
         pendingTransit.set(plan);
         send(res, 200, {
           from: plan.from.name,
@@ -328,7 +343,9 @@ export function createApi(deps: ApiDeps) {
         return true;
       }
     } catch (e) {
-      if (e instanceof HttpError) send(res, e.status, { error: e.message });
+      // 안경에서 목적지 고르기를 취소: 단축어가 읽을 수 있게 200 + speech (대중교통 단축어용 빈 options)
+      if (e instanceof ChoiceCancelled) send(res, 200, { active: false, speech: e.message, options: [] });
+      else if (e instanceof HttpError) send(res, e.status, { error: e.message });
       else if (e instanceof KakaoError) send(res, 502, { error: e.message });
       else {
         log(`api error: ${e instanceof Error ? e.message : String(e)}`);
