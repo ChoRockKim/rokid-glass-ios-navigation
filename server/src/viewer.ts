@@ -19,14 +19,14 @@ export const VIEWER_HTML = `<!doctype html>
     font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; -webkit-user-select: none; user-select: none; }
   /* 화면(앱)은 칠하지 않고 얇은 테두리만. 페이지 바탕은 검정(투과형 안경에서는 검정 = 안 보임) */
   #app { position: relative; width: 480px; height: 282px; padding: 14px 18px; overflow: hidden; cursor: pointer; background: transparent; border: 1px solid var(--dim); border-radius: 12px; }
-  .top, .bottom { display: flex; justify-content: space-between; font-size: 16px; height: 22px; color: var(--dim); }
-  .bottom { position: absolute; left: 18px; right: 18px; bottom: 10px; font-size: 14px; height: 18px; }
-  .line1 { margin-top: 18px; font-size: 30px; line-height: 38px; max-height: 76px; overflow: hidden; font-weight: 700; word-break: keep-all; }
-  .line2 { margin-top: 10px; font-size: 22px; line-height: 30px; max-height: 60px; overflow: hidden; word-break: keep-all; }
+  .top, .bottom { display: flex; justify-content: space-between; font-size: 13px; height: 18px; color: var(--dim); }
+  .bottom { position: absolute; left: 18px; right: 18px; bottom: 10px; font-size: 12px; height: 16px; }
+  .line1 { margin-top: 14px; font-size: 22px; line-height: 30px; max-height: 60px; overflow: hidden; font-weight: 700; word-break: keep-all; }
+  .line2 { margin-top: 6px; font-size: 17px; line-height: 24px; max-height: 48px; overflow: hidden; word-break: keep-all; }
   .warn .line1 { color: #fff; }
   .idle .line1, .idle .line2 { color: var(--dim); }
   #tokenForm { position: absolute; left: 18px; right: 18px; bottom: 36px; display: none; gap: 8px; }
-  #tokenForm input, #tokenForm button { font: inherit; font-size: 16px; padding: 8px; border-radius: 8px; border: 1px solid var(--g); background: transparent; color: var(--g); }
+  #tokenForm input, #tokenForm button { font: inherit; font-size: 14px; padding: 8px; border-radius: 8px; border: 1px solid var(--g); background: transparent; color: var(--g); }
   #tokenForm input { flex: 1; min-width: 0; }
 </style>
 </head>
