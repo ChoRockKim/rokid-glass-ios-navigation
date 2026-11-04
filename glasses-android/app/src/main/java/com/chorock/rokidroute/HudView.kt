@@ -354,7 +354,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     /**
      * 대중교통 후보 (네이버 지도 앱처럼): 카드마다
      *   [12분]  환승 0 · 1,550원 · 도보 6분                  회기 승차
-     *   [▬ 경의중앙선 (8분) ▬]·····[▬ 273번 (5분) ▬]   ← 구간 시간 비율 막대. 버스 = 채운 막대, 지하철 = 테두리 막대, 도보 = 점선
+     *   [▬ 경의중앙선 (8분) ▬]··도보 6분··[▬ 273번 (5분) ▬]   ← 구간 시간 비율 막대. 버스 = 채운 막대, 지하철 = 테두리 막대, 도보 = 점선
      * 한 화면에 3장, 선택한 카드는 테두리. 글자가 칸보다 길면 자른다 (화면 밖으로 안 넘침)
      */
     private fun drawRouteCards(canvas: Canvas, m: Menu, cards: List<RouteCard>) {
@@ -389,7 +389,8 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
             val total = card.legs.sumOf { it.minutes }.coerceAtLeast(1)
             val minW = 10f
             val avail = (right - 4f) - (left + 4f) - (card.legs.size - 1) * 3f
-            val widths = card.legs.map { (avail * it.minutes / total).coerceAtLeast(if (it.kind == "walk") 6f else minW * 2) }
+            // 도보도 "6분" 이 들어갈 만큼은 폭을 준다
+            val widths = card.legs.map { (avail * it.minutes / total).coerceAtLeast(if (it.kind == "walk") 26f else minW * 2) }
             val scale = avail / widths.sum().coerceAtLeast(1f)
             var bx = left + 4f
             card.legs.forEachIndexed { j, leg ->
@@ -397,7 +398,21 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
                 val r = RectF(bx, barTop, bx + w, barTop + barH)
                 val alpha = if (sel) 255 else 150
                 when (leg.kind) {
-                    "walk" -> canvas.drawLine(bx + 1f, barTop + barH / 2, bx + w - 1f, barTop + barH / 2, walkDots.apply { this.alpha = alpha })
+                    "walk" -> {
+                        // 점선 가운데에 "도보 6분" (좁으면 "6분"), 글자 양옆만 점선
+                        val dots = walkDots.apply { this.alpha = alpha }
+                        walkLabel.color = if (sel) green else dim
+                        val text = listOf("도보 ${leg.minutes}분", "${leg.minutes}분").firstOrNull { walkLabel.measureText(it) <= w - 6f }
+                        val mid = barTop + barH / 2
+                        if (text == null) canvas.drawLine(bx + 1f, mid, bx + w - 1f, mid, dots)
+                        else {
+                            val tw = walkLabel.measureText(text)
+                            val tx = bx + (w - tw) / 2
+                            if (tx - 3f > bx + 1f) canvas.drawLine(bx + 1f, mid, tx - 3f, mid, dots)
+                            if (tx + tw + 3f < bx + w - 1f) canvas.drawLine(tx + tw + 3f, mid, bx + w - 1f, mid, dots)
+                            canvas.drawText(text, tx, barTop + barH - 4f, walkLabel)
+                        }
+                    }
                     "bus" -> canvas.drawRoundRect(r, 4f, 4f, busFill.apply { this.alpha = if (sel) 230 else 120 })
                     else -> canvas.drawRoundRect(r, 4f, 4f, subwayLine.apply { this.alpha = alpha })
                 }
@@ -424,6 +439,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     private val cardTime = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 20f; typeface = Typeface.DEFAULT_BOLD }
     private val cardInfo = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 12f }
     private val walkDots = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2f; color = dim; strokeCap = Paint.Cap.ROUND; pathEffect = DashPathEffect(floatArrayOf(0.1f, 4f), 0f) }
+    private val walkLabel = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f }
     private val busFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = green }
     private val subwayLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.6f; color = green }
     private val busLabel = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f; typeface = Typeface.DEFAULT_BOLD; color = Color.BLACK }
