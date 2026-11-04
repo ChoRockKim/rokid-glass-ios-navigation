@@ -26,7 +26,7 @@ npx tsx scripts/smoke-kakao.ts 강남역 선릉역   # 카카오 실 API 확인
 | `/route status` | 현재 단계 |
 | `/route stop` | 종료 |
 
-출발지는 필수다. iPhone 위치를 서버가 받지 않기 때문.
+출발지를 안 쓰면(`/route 선릉역`) 폰에서 받은 마지막 위치(`POST /location`)에서 출발한다. 받은 위치가 없으면 출발지 필수.
 
 Slack 앱 설정에 필요한 것: Socket Mode 켜기, App-Level Token(`connections:write`), 슬래시 커맨드 `/route`, 봇 스코프 `commands`.
 

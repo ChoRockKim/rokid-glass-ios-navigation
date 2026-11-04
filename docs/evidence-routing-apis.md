@@ -64,3 +64,15 @@
 - 카카오 도보는 `guidance`와 `path.points`를 주지만 회전 코드가 없어, 안내 방향을 구조화하려면 TMAP의 `turnType`이 유리하다(추정).
 - 무료 한도는 두 API 모두 하루 1,000건 수준(카카오 확인, TMAP은 병합 셀 해석)이므로 서버에서 캐싱 또는 호출 제한이 필요하다. 다만 카카오 포럼 답변은 길찾기 결과 캐싱이 금지될 수 있다고 하므로 약관을 먼저 확인해야 한다.
 - OSRM은 공개 서버로 서비스하면 안 되고, 쓰려면 자체 호스팅한 foot 프로파일에 한국 OSM extract를 쓰되 인도 데이터 품질 검증이 선행되어야 한다.
+
+## 대중교통 (2026-11-04 직접 호출)
+- `GET dapi.kakao.com/v2/routing/publictraffic?start_x=&start_y=&end_x=&end_y=` (도보와 같은 파라미터) → 200.
+- 외대앞역 근처 → 왕십리역: 후보 15개 (`properties.bus` 8, `subway` 3, `busAndSubway` 4). 카카오맵 링크 `landingURL`.
+- 경로마다 `properties`: `type`(SUBWAY/BUS/BUS_AND_SUBWAY), `totalDistance`, `totalTime`(s), `transfers`, `fare.value`.
+- 구간 `steps[].properties`: `type`(SUBWAY/BUS/WALKING), `guidance`(예: `간선 421 (제기역약령시장 > 성동구청)`), `distance`, `time`, `stops[].name`(**중간 정류장 전부**), `vehicles[].name`(같은 구간을 타는 노선들, 예: `141외 3대`). `steps[].path.points` 좌표 있음(환승 도보 포함).
+- **없는 것:** 실시간 도착 정보, 정류장/역 ID(이름만), 출발지→첫 정류장·마지막 정류장→도착지 도보 구간(첫 구간이 바로 SUBWAY/BUS 로 시작).
+- 실시간 도착은 별도 API 필요 (명세 미검증, 검색 결과 기준):
+  - 서울 지하철: 서울 열린데이터광장 실시간 도착정보 `realtimeStationArrival` (역명으로 조회, data.seoul.go.kr 키). https://bsh-developer.tistory.com/798
+  - 서울 버스: 서울특별시_버스도착정보조회 서비스 (data.go.kr 키, 도착 예정 초·몇 번째 전 정류소). https://www.data.go.kr/data/15000314/openapi.do
+  - 경기 버스: 경기도_버스도착정보 조회 (data.go.kr 키, stationId 필요). https://www.data.go.kr/data/15080346/openapi.do
+  - 이 세션에서 `ws.bus.go.kr`, `swopenapi.seoul.go.kr`, `apis.data.go.kr`, `openapi.seoul.go.kr` 은 네트워크 정책으로 403.
