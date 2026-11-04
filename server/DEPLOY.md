@@ -1,5 +1,7 @@
 # Railway 배포
 
+**현재 배포 (2026-11-04, MCP 로 생성):** 프로젝트 `rokid-route` / 서비스 `route-server` / `https://route-server-production.up.railway.app` (포트 8787, `PORT=8787` 변수로 고정)
+
 Railway 화면 구성은 바뀔 수 있다. 아래 메뉴 이름은 작성 시점의 일반적인 이름이며 직접 눌러 확인한 것은 아니다.
 
 ## 1. 서비스 만들기
@@ -7,7 +9,7 @@ Railway 화면 구성은 바뀔 수 있다. 아래 메뉴 이름은 작성 시�
 2. 서비스 **Settings**
    - **Source → Root Directory**: `/server`
    - **Branch**: `feat/route-server` (main 에 합친 뒤에는 `main`)
-   - `server/Dockerfile` 이 있으면 Docker 로 빌드한다. 설정 파일(`railway.json`)이 안 먹으면 **Config-as-code** 경로를 `/server/railway.json` 으로 지정.
+   - `server/Dockerfile` 로 빌드. 헬스 체크 `/healthz`, 재시작 ON_FAILURE(5회)는 서비스 설정에 직접 넣었다 (`railway.json` 방식은 Railway 가 deprecated 로 거부해서 쓰지 않음).
    - **Replicas 는 1** 로. 진행 중 경로가 메모리에만 있다.
 3. **Networking → Generate Domain** → `https://<이름>.up.railway.app` 가 생긴다. 포트는 Railway 가 `PORT` 로 넣어 준다.
 
