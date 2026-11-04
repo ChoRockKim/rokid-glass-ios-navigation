@@ -60,7 +60,11 @@ function why(e: unknown): string {
 }
 const RADIUS_M = 250;
 const REFETCH_M = 120;
-const MIN_INTERVAL_MS = 15_000;
+/** Overpass(공개 서버)만 간격 제한. 타일은 CDN 이라 제한 없이 바로 */
+const OVERPASS_MIN_INTERVAL_MS = 15_000;
+/** 연달아 위치가 바뀌면(탭으로 빠르게 넘김) 마지막 위치만 조회 */
+const DEBOUNCE_MS = 300;
+const TILE_CACHE = 40;
 
 const MAJOR = new Set(["motorway", "trunk", "primary", "secondary", "tertiary"]);
 const KINDS =
@@ -86,8 +90,12 @@ export function parseOverpass(body: unknown): Roads {
 
 export class RoadFeed {
   private center: [number, number] | null = null;
-  private lastTry = 0;
+  private lastOverpass = 0;
   private busy = false;
+  private pending: [number, number] | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  /** 받은 타일 원본 (키 "x/y"). 지나간 곳으로 돌아가면 다시 받지 않는다 */
+  private tiles = new Map<string, Uint8Array>();
   private latest: Roads | null = null;
   private listeners = new Set<(m: Roads) => void>();
 
@@ -96,7 +104,7 @@ export class RoadFeed {
     private log: (m: string) => void,
   ) {
     nav.onMap((m) => {
-      if (m.type === "map-pos") void this.maybeFetch(m.lon, m.lat);
+      if (m.type === "map-pos") this.schedule(m.lon, m.lat);
       if (m.type === "map-route") this.center = null; // 새 경로면 다시 가져온다
     });
   }
@@ -133,13 +141,27 @@ export class RoadFeed {
     const out: Roads = { type: "map-roads", lines: [], major: [] };
     for (let x = x0; x <= x1; x++) {
       for (let y = y0; y <= y1; y++) {
-        const url = this.tileTemplate.replace("{z}", String(TILE_Z)).replace("{x}", String(x)).replace("{y}", String(y));
-        const r = roadsFromTile(await this.getBytes(url), x, y, TILE_Z, bbox);
+        const r = roadsFromTile(await this.tile(x, y), x, y, TILE_Z, bbox);
         out.lines.push(...r.lines);
         out.major.push(...r.major);
       }
     }
     return out;
+  }
+
+  private async tile(x: number, y: number): Promise<Uint8Array> {
+    const key = `${x}/${y}`;
+    const hit = this.tiles.get(key);
+    if (hit) {
+      this.tiles.delete(key);
+      this.tiles.set(key, hit); // 최근 사용으로
+      return hit;
+    }
+    const url = this.tileTemplate!.replace("{z}", String(TILE_Z)).replace("{x}", String(x)).replace("{y}", String(y));
+    const buf = await this.getBytes(url);
+    this.tiles.set(key, buf);
+    if (this.tiles.size > TILE_CACHE) this.tiles.delete(this.tiles.keys().next().value!);
+    return buf;
   }
 
   private async query(q: string): Promise<unknown> {
@@ -166,13 +188,19 @@ export class RoadFeed {
     throw new Error(errors.join(" | "));
   }
 
-  private async maybeFetch(lon: number, lat: number) {
-    if (this.busy) return;
+  private schedule(lon: number, lat: number) {
+    this.pending = [lon, lat];
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => void this.run(), DEBOUNCE_MS);
+  }
+
+  private async run() {
+    this.timer = null;
+    if (this.busy || !this.pending) return; // 끝나면 finally 에서 다시 본다
+    const [lon, lat] = this.pending;
+    this.pending = null;
     if (this.center && distanceM(this.center, [lon, lat]) < REFETCH_M) return;
-    if (Date.now() - this.lastTry < MIN_INTERVAL_MS) return;
     this.busy = true;
-    this.lastTry = Date.now();
-    const q = `[out:json][timeout:20];way(around:${RADIUS_M},${lat.toFixed(6)},${lon.toFixed(6)})[highway~"^(${KINDS})$"];out geom;`;
     try {
       let roads: Roads;
       let via = "openfreemap";
@@ -180,18 +208,22 @@ export class RoadFeed {
         roads = await this.fromTiles(lon, lat);
       } catch (e) {
         this.tileTemplate = null;
+        if (Date.now() - this.lastOverpass < OVERPASS_MIN_INTERVAL_MS) throw e;
+        this.lastOverpass = Date.now();
         this.log(`roads 타일 실패, Overpass 로: ${why(e)}`);
+        const q = `[out:json][timeout:20];way(around:${RADIUS_M},${lat.toFixed(6)},${lon.toFixed(6)})[highway~"^(${KINDS})$"];out geom;`;
         roads = parseOverpass(await this.query(q));
         via = new URL(ENDPOINTS[this.preferred]!).host;
       }
       this.center = [lon, lat];
       this.latest = roads;
-      this.log(`roads: ${roads.lines.length} lines around ${lat.toFixed(4)},${lon.toFixed(4)} via ${via}`);
+      this.log(`roads: ${roads.lines.length} lines around ${lat.toFixed(4)},${lon.toFixed(4)} via ${via} (tiles cached ${this.tiles.size})`);
       for (const fn of this.listeners) fn(roads);
     } catch (e) {
       this.log(`roads 실패: ${why(e)}`);
     } finally {
       this.busy = false;
+      if (this.pending) void this.run(); // 조회하는 동안 들어온 최신 위치
     }
   }
 }
