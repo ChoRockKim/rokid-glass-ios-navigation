@@ -117,6 +117,8 @@ export type GlassInput =
   | { type: "stop" }
   /** 안경 메뉴: 지금 위치에서 경로 다시 찾기 */
   | { type: "reroute" }
+  /** 안경 앱 오류 기록 (앱이 죽었거나 메시지 처리 실패, 다음 연결 때 보냄) */
+  | { type: "crash"; text: string; version?: string }
   /** 안경 메뉴: 지금 위치 주변 버스·지하철 도착 */
   | { type: "nearby" }
   /** 안경 메뉴: 즐겨찾기 목록 요청 */

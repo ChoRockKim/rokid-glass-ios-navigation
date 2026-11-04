@@ -92,5 +92,11 @@ const shutdown = async () => {
   await slack?.stop();
   process.exit(0);
 };
+// 놓친 오류: Promise 거부는 기록만 하고 계속, 예외는 기록하고 종료 (Railway 가 다시 띄우고 경로는 디스크에서 이어 감)
+process.on("unhandledRejection", (e) => log(`unhandledRejection: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`));
+process.on("uncaughtException", (e) => {
+  log(`uncaughtException (종료 후 재시작): ${e.stack ?? e.message}`);
+  setTimeout(() => process.exit(1), 200);
+});
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

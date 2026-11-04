@@ -10,6 +10,9 @@ import type { RoadFeed } from "./roads.js";
 import type { Ota } from "./ota.js";
 import type { Chooser } from "./chooser.js";
 
+/** 이 간격으로 ping, 다음 ping 때까지 pong 이 없으면 끊는다 (최대 2배 시간 안에 정리) */
+export const HEARTBEAT_MS = Number(process.env.GLASS_HEARTBEAT_MS ?? 15_000);
+
 export function startGlassServer(opts: {
   port: number;
   token: string;
@@ -37,7 +40,15 @@ export function startGlassServer(opts: {
   const { port, token, nav, log, api } = opts;
   const onPositions = opts.onPositions ?? ((p: Position[]) => nav.updatePositions(p));
 
-  const http = createServer(async (req, res) => {
+  const http = createServer((req, res) => {
+    route(req, res).catch((e) => {
+      log(`http ${req.method} ${req.url?.split("?")[0]} 실패: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+      if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "internal error" }));
+    });
+  });
+
+  async function route(req: IncomingMessage, res: ServerResponse) {
     if (req.url === "/healthz") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true, clients: wss.clients.size, active: Boolean(nav.current) }));
@@ -59,7 +70,7 @@ export function startGlassServer(opts: {
     if (opts.ota && (await opts.ota.handle(req, res))) return;
     if (api && (await api(req, res))) return;
     res.writeHead(404).end();
-  });
+  }
 
   const wss = new WebSocketServer({ noServer: true });
   const mapClients = new Set<WebSocket>();
@@ -101,6 +112,26 @@ export function startGlassServer(opts: {
       } catch {
         return;
       }
+      // 메시지 하나 처리하다 오류가 나도 서버 전체가 죽지 않게
+      try {
+        handleMessage(ws, msg);
+      } catch (e) {
+        log(`glass message ${String((msg as { type?: string }).type)} 처리 실패: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+      }
+    });
+    ws.on("close", () => {
+      mapClients.delete(ws);
+      detach?.();
+      log(`glass disconnected, clients=${wss.clients.size}`);
+    });
+  });
+
+  function handleMessage(ws: WebSocket, msg: GlassInput) {
+      if (msg.type === "crash") {
+        // 안경 앱이 죽었거나 메시지 처리 중 오류가 난 기록 (다음 연결 때 보낸다). 길이 제한
+        log(`glass crash report (v${String(msg.version ?? "?").slice(0, 20)}): ${String(msg.text ?? "").slice(0, 4000)}`);
+        return;
+      }
       if (msg.type === "next") nav.move(1);
       else if (msg.type === "prev") nav.move(-1);
       else if (msg.type === "sync") send(ws, nav.snapshot());
@@ -124,18 +155,12 @@ export function startGlassServer(opts: {
         nav.stop();
       } else if (msg.type === "reroute") {
         if (!opts.onReroute) send(ws, { type: "notice", text: "서버에서 다시 찾기를 지원하지 않음" });
-        else void opts.onReroute().then((text) => send(ws, { type: "notice", text }));
+        else void opts.onReroute().then((text) => send(ws, { type: "notice", text })).catch((e) => log(`reroute failed: ${e instanceof Error ? e.message : String(e)}`));
       }
       else if (msg.type === "position" && Number.isFinite(msg.lat) && Number.isFinite(msg.lon)) {
         onPositions([{ lat: msg.lat, lon: msg.lon, acc: msg.acc, ts: msg.ts ?? Date.now() }]);
       }
-    });
-    ws.on("close", () => {
-      mapClients.delete(ws);
-      detach?.();
-      log(`glass disconnected, clients=${wss.clients.size}`);
-    });
-  });
+  }
 
   nav.onChange((msg) => {
     for (const ws of wss.clients) send(ws, msg);
@@ -148,10 +173,23 @@ export function startGlassServer(opts: {
     for (const ws of mapClients) send(ws, msg);
   });
 
-  // 핫스팟·프록시 경유 시 유휴 연결이 끊기지 않게 30초마다 ping
+  // 15초마다 ping. 직전 ping 에 pong 이 없던 연결은 끊는다 (죽은 안경을 살아 있는 것으로 보면 목적지 고르기를 60초 기다리게 됨)
+  const alive = new WeakMap<WebSocket, boolean>();
+  wss.on("connection", (ws) => {
+    alive.set(ws, true);
+    ws.on("pong", () => alive.set(ws, true));
+  });
   const timer = setInterval(() => {
-    for (const ws of wss.clients) ws.ping();
-  }, 30_000);
+    for (const ws of wss.clients) {
+      if (alive.get(ws) === false) {
+        log("glass: 응답 없는 연결 끊음");
+        ws.terminate();
+        continue;
+      }
+      alive.set(ws, false);
+      ws.ping();
+    }
+  }, HEARTBEAT_MS);
   http.on("close", () => clearInterval(timer));
 
   http.listen(port, () => log(`glass ws listening on :${port}/glass`));

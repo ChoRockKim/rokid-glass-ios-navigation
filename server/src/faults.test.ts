@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 
 let srv: Server;
-let mode: "flaky" | "400" | "ok" = "ok";
+let mode: "flaky" | "400" | "429" | "ok" = "ok";
 let hits = 0;
 const walk = {
   status: "OK",
@@ -20,6 +20,7 @@ before(async () => {
     const u = new URL(req.url!, "http://x");
     res.setHeader("content-type", "application/json");
     if (mode === "400") return res.writeHead(400).end(JSON.stringify({ message: "bad" }));
+    if (mode === "429") return res.writeHead(429).end(JSON.stringify({ errorType: "RequestThrottled", message: "API limit has been exceeded." }));
     if (mode === "flaky" && hits === 1) return res.writeHead(502).end(JSON.stringify({ message: "gateway" }));
     if (u.pathname.endsWith("address.json")) return res.end(JSON.stringify({ documents: [{ address_name: "서울 강남구 테헤란로 1", x: "127.0", y: "37.5" }] }));
     if (u.pathname.endsWith("keyword.json")) return res.end(JSON.stringify({ documents: [{ place_name: "선릉역 2호선", x: "127.0", y: "37.502", distance: "220" }] }));
@@ -89,4 +90,12 @@ test("실시간 폴러: 실패하면 안경 메시지에 이유", async () => {
   stop();
   const m = nav.snapshot();
   assert.ok(m.type === "step" && m.ride?.error === "실시간 정보 없음 (서버 응답 없음)");
+});
+
+test("카카오 사용량 초과(429): 다시 시도하지 않고 알아볼 수 있는 문구", async () => {
+  const { searchAddress, KakaoError } = await import("./kakao.js");
+  mode = "429"; hits = 0;
+  await assert.rejects(searchAddress("x", "k"), (e) => e instanceof KakaoError && /사용량 초과/.test(e.message));
+  assert.equal(hits, 1);
+  mode = "ok";
 });

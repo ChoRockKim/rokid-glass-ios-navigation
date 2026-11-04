@@ -36,6 +36,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLog.install(filesDir)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
@@ -44,6 +45,14 @@ class MainActivity : Activity() {
         heading = HeadingProvider(this)
         hud = HudView(this) { heading.heading() }
         hud.onInput = ::handle
+        // 방향이 바뀌면 다시 그리기: 초당 20번까지로 묶고, 1° 넘게 바뀐 경우만 (예전엔 센서가 있으면 초당 60번 계속 그림)
+        var redrawQueued = false
+        heading.onChange = {
+            if (!redrawQueued) {
+                redrawQueued = true
+                hud.postDelayed({ redrawQueued = false; hud.headingMoved() }, 50)
+            }
+        }
         // 화면 전체는 검정(= 안경에서 투명), 안내는 480x282 dp 를 아래 가운데에
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         root.addView(hud, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
@@ -86,7 +95,13 @@ class MainActivity : Activity() {
             },
             onPairCode = { hud.pairCode = it },
             onNotice = { showNotice(it) },
-            onConnection = { hud.offlineSince = it },
+            onConnection = {
+                hud.offlineSince = it
+                // 연결되면 지난번에 남은 오류 기록을 서버로 (서버 로그에서 원인 확인)
+                if (it == null) CrashLog.take()?.let { text ->
+                    if (!client.send(JSONObject().put("type", "crash").put("version", BuildConfig.VERSION_NAME).put("text", text))) CrashLog.record(text)
+                }
+            },
         )
         updater = Updater(this, BuildConfig.SERVER_BASE, token = { prefs.getString("glassToken", null) ?: BuildConfig.DEVICE_TOKEN.takeIf { it.isNotEmpty() } }) { note ->
             hud.update = updater.available?.versionName
@@ -157,7 +172,17 @@ class MainActivity : Activity() {
         super.onPause()
     }
 
+    /** 서버 메시지 하나가 잘못돼도 앱이 죽지 않게: 그 메시지만 버리고 기록해 둔다 (다음 연결 때 서버로) */
     private fun onServerMessage(m: JSONObject) {
+        try {
+            handleServerMessage(m)
+        } catch (e: Exception) {
+            Log.w("Route", "message ${m.optString("type")} 처리 실패", e)
+            CrashLog.record("메시지 ${m.optString("type")} 처리 실패: ${Log.getStackTraceString(e).take(1500)} | ${m.toString().take(300)}")
+        }
+    }
+
+    private fun handleServerMessage(m: JSONObject) {
         cache.record(m)
         val s = hud.state
         var next = s.apply(m)

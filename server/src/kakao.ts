@@ -46,7 +46,12 @@ async function getJson(url: URL, key: string): Promise<unknown> {
     const res = await fetch(url, { headers: authHeader(key), signal: AbortSignal.timeout(8000), dispatcher });
     const body = await res.json().catch(() => null);
     if (!res.ok) {
-      const msg = (body as { message?: string } | null)?.message ?? res.statusText;
+      const b = body as { message?: string; msg?: string; code?: number; errorType?: string } | null;
+      const msg = b?.message ?? b?.msg ?? res.statusText;
+      // 사용량 초과: 429 또는 code -10 ("API limit has been exceeded"). 다시 시도해도 소용없으니 알아볼 수 있는 문구로
+      if (res.status === 429 || b?.code === -10 || /limit|quota|throttl/i.test(`${msg} ${b?.errorType ?? ""}`)) {
+        throw new KakaoError("카카오 사용량 초과 (오늘 한도 또는 잠시 너무 많이 호출함). 잠시 뒤 다시 해 주세요");
+      }
       throw new KakaoError(`카카오 API ${res.status}: ${msg}`);
     }
     return body;

@@ -37,6 +37,9 @@ class HeadingProvider(context: Context) : SensorEventListener {
         else -> Mode.NONE
     }
 
+    /** 방향이 바뀌었을 때 (화면이 다시 그릴지 정한다) */
+    var onChange: (() -> Unit)? = null
+
     /** 화면 표시용: "RELATIVE_MAG · 지자기 Y" */
     val describe = "$mode · 지자기 ${if (magnetic != null) "Y" else "N"}"
 
@@ -101,10 +104,12 @@ class HeadingProvider(context: Context) : SensorEventListener {
         if (!calibrated) {
             offset = target
             calibrated = true
+            onChange?.invoke()
             return
         }
         val d = ((target - offset + 540f) % 360f) - 180f
         offset = norm(offset + d * rate)
+        if (abs(d * rate) >= 0.5f) onChange?.invoke()
     }
 
     override fun onSensorChanged(event: SensorEvent) {
@@ -115,11 +120,13 @@ class HeadingProvider(context: Context) : SensorEventListener {
                 val prev = yaw
                 if (prev == null) {
                     yaw = deg
+                    onChange?.invoke()
                     return
                 }
                 val d = ((deg - prev + 540f) % 360f) - 180f
                 if (abs(d) < 2f) return // 작은 떨림 무시
                 yaw = norm(prev + d * 0.25f) // 부드럽게 (최단 방향)
+                onChange?.invoke()
             }
             Sensor.TYPE_ACCELEROMETER -> {
                 lowPass(event.values, gravity, haveGravity)

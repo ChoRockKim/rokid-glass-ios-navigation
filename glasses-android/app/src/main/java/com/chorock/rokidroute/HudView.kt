@@ -260,7 +260,24 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         )
     }
 
+    /** 그리다 오류가 나도 앱이 죽지 않게 (한 번만 기록) */
+    private var drawErrorLogged = false
+
     override fun onDraw(canvas: Canvas) {
+        val saved = canvas.saveCount
+        try {
+            drawAll(canvas)
+        } catch (e: Exception) {
+            canvas.restoreToCount(saved)
+            if (!drawErrorLogged) {
+                drawErrorLogged = true
+                android.util.Log.w("Route", "draw failed", e)
+                CrashLog.record("그리기 실패: ${android.util.Log.getStackTraceString(e).take(1500)}")
+            }
+        }
+    }
+
+    private fun drawAll(canvas: Canvas) {
         canvas.save()
         canvas.scale(k, k)
 
@@ -347,7 +364,8 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         canvas.restore()
 
         // 위치가 미끄러지는 중이거나 센서 방향을 쓰면 계속 다시 그림. 길안내 중이면 1초마다 (위치 경과 시간 갱신)
-        if (glideFrom != null || (sensor != null && pos != null && mapMode != MapMode.OFF)) postInvalidateOnAnimation()
+        // 위치가 미끄러지는 동안만 매 프레임. 방향 센서는 바뀔 때 headingMoved() 로 (계속 60번씩 그리지 않음)
+        if (glideFrom != null) postInvalidateOnAnimation()
         else if (navigating || offlineSince != null || s.cachedAt != null) postInvalidateDelayed(1000)
         else postInvalidateDelayed(15_000) // 오른쪽 아래 시각
     }
@@ -634,59 +652,91 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     }
 
     /**
+     * 지도 도형을 미터 단위로 한 번만 만들어 둔다 (도로·경로를 새로 받을 때만).
+     * 그릴 때는 행렬 하나로 옮기고·돌리고·줄인다 → 방향이 바뀔 때마다 좌표 수천 개를 다시 계산하지 않음 (배터리·발열)
+     */
+    private class Geom(val roads: MapRoads?, val route: MapRoute?, val lon0: Double, val lat0: Double) {
+        private val kx = cos(Math.toRadians(lat0)) * 111_320
+        private val ky = 110_540.0
+        fun mx(lon: Double) = ((lon - lon0) * kx).toFloat()
+        fun my(lat: Double) = ((lat - lat0) * ky).toFloat()
+        private fun path(points: List<DoubleArray>, close: Boolean = false) = Path().apply {
+            points.forEachIndexed { i, p -> if (i == 0) moveTo(mx(p[0]), my(p[1])) else lineTo(mx(p[0]), my(p[1])) }
+            if (close) close()
+        }
+        val buildings: List<Path> = roads?.buildings?.map { path(it, close = true) } ?: emptyList()
+        /** 종류별 도로 (major · road · service · path · rail) */
+        val roadsByKind: Map<String, List<Path>> = roads?.let { r ->
+            val kinds = r.kinds.ifEmpty { r.major.map { if (it) "major" else "road" } }
+            r.lines.indices.groupBy({ kinds.getOrNull(it) ?: "road" }, { path(r.lines[it]) })
+        } ?: emptyMap()
+        val routeSegs: List<Pair<String, Path>> = route?.segments?.map { it.kind to path(it.points) } ?: emptyList()
+    }
+
+    private var geom: Geom? = null
+    private val mat = android.graphics.Matrix()
+    private val tmpPath = Path()
+    private val pt = FloatArray(2)
+    /** 마지막으로 그린 지도 방향 (방향이 1° 넘게 바뀌었을 때만 다시 그린다) */
+    private var drawnHeading: Float? = null
+
+    /** 방향 센서가 바뀌었다고 알려 올 때: 1° 넘게 달라졌으면 다시 그림 (MainActivity 가 초당 20번까지로 묶어 부른다) */
+    fun headingMoved() {
+        val h = headingProvider() ?: return
+        val last = drawnHeading
+        if (last == null || abs(((h - last + 540f) % 360f) - 180f) >= 1f) invalidate()
+    }
+
+    /**
      * faint: 도로·건물을 흐리게 (경로선·내 위치는 그대로).
      * 카메라는 내 위치, 다른 단계를 미리 보는 중이면(pos.focus) 그 단계 시작점. "나"는 항상 실제 위치에 (추정 위치면 안 그림).
      */
     private fun drawMap(canvas: Canvas, pos: MapPos, heading: Float, fromSensor: Boolean, faint: Boolean, v: Viewport) {
         val camLon = pos.focus?.get(0) ?: pos.lon
         val camLat = pos.focus?.get(1) ?: pos.lat
-        val lat0 = Math.toRadians(camLat)
-        val kx = cos(lat0) * 111_320
-        val ky = 110_540.0
-        val h = Math.toRadians(heading.toDouble())
-        val c = cos(h); val sn = sin(h)
-        fun px(p: DoubleArray): Pair<Float, Float> {
-            val dx = (p[0] - camLon) * kx
-            val dy = (p[1] - camLat) * ky
-            val x = dx * c - dy * sn
-            val yy = dx * sn + dy * c
-            return Pair((v.cx + x * v.k).toFloat(), (v.cy - yy * v.k).toFloat())
+        val g = geom?.takeIf { it.roads === state.roads && it.route === state.route }
+            ?: Geom(state.roads, state.route, camLon, camLat).also { geom = it }
+        // 미터 좌표 → 화면: 카메라를 원점으로, 방향만큼 돌리고, 1m 당 v.k 로 줄이고(위가 +), 카메라 점으로
+        mat.setTranslate(-g.mx(camLon), -g.my(camLat))
+        mat.postRotate(heading)
+        mat.postScale(v.k, -v.k)
+        mat.postTranslate(v.cx, v.cy)
+        drawnHeading = heading
+        fun draw(p: Path, paint: Paint) {
+            p.transform(mat, tmpPath)
+            canvas.drawPath(tmpPath, paint)
         }
-        fun path(points: List<DoubleArray>): Path {
-            val p = Path()
-            points.forEachIndexed { i, pt -> val (x, y) = px(pt); if (i == 0) p.moveTo(x, y) else p.lineTo(x, y) }
-            return p
+        fun screen(lon: Double, lat: Double): Pair<Float, Float> {
+            pt[0] = g.mx(lon); pt[1] = g.my(lat)
+            mat.mapPoints(pt)
+            return pt[0] to pt[1]
         }
 
         canvas.save()
         canvas.clipRect(v.left, v.top, v.right, v.bottom)
-        if (v.simple) state.roads?.let { r ->
-            if (faint) canvas.saveLayerAlpha(v.left, v.top, v.right, v.bottom, 110)
-            val kinds = r.kinds.ifEmpty { r.major.map { if (it) "major" else "road" } }
-            for (k in listOf("service", "path", "road", "major")) {
-                val paint = simpleRoad.getValue(k)
-                r.lines.forEachIndexed { i, line -> if (kinds.getOrNull(i) == k) canvas.drawPath(path(line), paint) }
+        if (state.roads != null) {
+            if (v.simple) {
+                if (faint) canvas.saveLayerAlpha(v.left, v.top, v.right, v.bottom, 110)
+                for (k in listOf("service", "path", "road", "major")) g.roadsByKind[k]?.forEach { draw(it, simpleRoad.getValue(k)) }
+                if (faint) canvas.restore()
+            } else {
+                if (faint) canvas.saveLayerAlpha(0f, 0f, W, H, 70)
+                for (b in g.buildings) draw(b, bldgLine)
+                fun each(k: String, paint: Paint) = g.roadsByKind[k]?.forEach { draw(it, paint) }
+                each("service", lineStyle.getValue("service"))
+                for ((k, b) in bands) each(k, b.edge)
+                for ((k, b) in bands) each(k, b.hole)
+                for ((k, b) in bands) each(k, b.fill)
+                each("path", lineStyle.getValue("path"))
+                each("rail", lineStyle.getValue("rail"))
+                if (faint) canvas.restore()
             }
-            if (faint) canvas.restore()
-        } else state.roads?.let { r ->
-            if (faint) canvas.saveLayerAlpha(0f, 0f, W, H, 70)
-            for (b in r.buildings) canvas.drawPath(path(b).apply { close() }, bldgLine)
-            val kinds = r.kinds.ifEmpty { r.major.map { if (it) "major" else "road" } }
-            val paths = r.lines.map { path(it) }
-            fun each(k: String, paint: Paint) = paths.forEachIndexed { i, p -> if (kinds.getOrNull(i) == k) canvas.drawPath(p, paint) }
-            each("service", lineStyle.getValue("service"))
-            for ((k, b) in bands) each(k, b.edge)
-            for ((k, b) in bands) each(k, b.hole)
-            for ((k, b) in bands) each(k, b.fill)
-            each("path", lineStyle.getValue("path"))
-            each("rail", lineStyle.getValue("rail"))
-            if (faint) canvas.restore()
         }
         state.route?.let { r ->
-            for (seg in r.segments) canvas.drawPath(path(seg.points), if (seg.kind == "walk") routePaint else ridePaint)
+            for ((kind, p) in g.routeSegs) draw(p, if (kind == "walk") routePaint else ridePaint)
             val n = pos.next
             if (n != null && n < r.turns.size) {
-                val (x, y) = px(r.turns[n])
+                val (x, y) = screen(r.turns[n][0], r.turns[n][1])
                 canvas.save(); canvas.rotate(45f, x, y)
                 canvas.drawRect(x - 5f, y - 5f, x + 5f, y + 5f, markStroke)
                 canvas.restore()
@@ -694,12 +744,11 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         }
         // 나: 위를 향한 삼각형 (실제 위치). 경로를 벗어났으면 속이 빈 삼각형
         if (!pos.estimated) {
-            val (mx, my) = px(doubleArrayOf(pos.lon, pos.lat))
+            val (mx, my) = screen(pos.lon, pos.lat)
             val z = v.me
-            val me = Path().apply {
-                moveTo(mx, my - 11f * z); lineTo(mx - 7f * z, my + 7f * z); lineTo(mx, my + 3f * z); lineTo(mx + 7f * z, my + 7f * z); close()
-            }
-            canvas.drawPath(me, if (pos.snapped) meFill else markStroke)
+            tmpPath.reset()
+            tmpPath.moveTo(mx, my - 11f * z); tmpPath.lineTo(mx - 7f * z, my + 7f * z); tmpPath.lineTo(mx, my + 3f * z); tmpPath.lineTo(mx + 7f * z, my + 7f * z); tmpPath.close()
+            canvas.drawPath(tmpPath, if (pos.snapped) meFill else markStroke)
         }
         canvas.restore()
     }
