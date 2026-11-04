@@ -3,6 +3,7 @@
 // 실패해도 경로 미니맵은 그대로 나온다. (개발 세션에서는 두 출처 모두 접속 불가라 Railway 로그로 확인)
 import { fetch } from "undici";
 import { dispatcher } from "./proxy.js";
+import { faultOn } from "./faults.js";
 import { distanceM } from "./guide.js";
 import type { MapMessage, Navigator, RoadKind } from "./navigation.js";
 import { VectorTile } from "@mapbox/vector-tile";
@@ -218,6 +219,7 @@ export class RoadFeed {
   private tileTemplate: string | null = null;
 
   private async getBytes(url: string): Promise<Uint8Array> {
+    if (faultOn("tiles")) throw new Error("오류 주입: tiles");
     const res = await fetch(url, { headers: { "user-agent": UA }, signal: AbortSignal.timeout(10_000), dispatcher });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return new Uint8Array(await res.arrayBuffer());

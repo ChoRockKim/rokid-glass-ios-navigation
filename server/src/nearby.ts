@@ -11,7 +11,7 @@ export interface NearbyBoard {
   /** 내 위치에서 m */
   distance: number | null;
   /** 노선(지하철은 "1호선 청량리행")별 도착 두 개까지, 빨리 오는 순 */
-  lines: { line: string; times: string[] }[];
+  lines: { line: string; times: string[]; etas: (number | null)[] }[];
   /** 못 가져왔으면 이유 */
   error?: string;
 }
@@ -29,19 +29,26 @@ const when = (sec: number | null, msg: string) =>
   sec === null ? msg.replace(/\[.*?\]/g, "").trim() || msg : sec <= 60 ? "곧 도착" : `${Math.ceil(sec / 60)}분`;
 
 /** 같은 노선끼리 모아 빨리 오는 노선부터 */
-function group(rows: { line: string; sec: number | null; text: string }[], max = 12) {
-  const by = new Map<string, { first: number; times: string[] }>();
+/** exact = sec 가 실제 남은 초 (어림값이 아님) → 안경이 줄여 보여 줄 수 있음 */
+function group(rows: { line: string; sec: number | null; text: string; exact?: boolean }[], max = 12) {
+  const by = new Map<string, { first: number; times: string[]; etas: (number | null)[] }>();
   for (const r of [...rows].sort((a, b) => (a.sec ?? 1e9) - (b.sec ?? 1e9))) {
-    const g = by.get(r.line) ?? { first: r.sec ?? 1e9, times: [] };
-    if (g.times.length < 2) g.times.push(r.text);
+    const g = by.get(r.line) ?? { first: r.sec ?? 1e9, times: [], etas: [] };
+    if (g.times.length < 2) {
+      g.times.push(r.text);
+      g.etas.push(r.exact ? r.sec : null);
+    }
     by.set(r.line, g);
   }
-  return [...by].sort((a, b) => a[1].first - b[1].first).slice(0, max).map(([line, g]) => ({ line, times: g.times }));
+  return [...by].sort((a, b) => a[1].first - b[1].first).slice(0, max).map(([line, g]) => ({ line, times: g.times, etas: g.etas }));
 }
 
 const short = (e: unknown) => {
   const m = e instanceof Error ? e.message : String(e);
-  return / 401/.test(m) ? "버스 키 확인 필요 (401)" : m.slice(0, 60);
+  if (/ 401/.test(m)) return "API 키 확인 필요 (401)";
+  if (/오류 주입/.test(m)) return "실시간 정보 없음 (오류 주입)";
+  if (/Timeout|AbortError|fetch failed|ECONN|ETIMEDOUT|UND_ERR| 5\d\d/.test(m)) return "서버 응답 없음";
+  return m.slice(0, 60);
 };
 
 export async function busBoard(lon: number, lat: number, key: string, base = "http://ws.bus.go.kr/api/rest"): Promise<NearbyBoard | null> {
@@ -56,7 +63,7 @@ export async function busBoard(lon: number, lat: number, key: string, base = "ht
   const rows = list.flatMap((x) =>
     [x.arrmsg1, x.arrmsg2]
       .filter((m): m is string => Boolean(m) && !/운행종료|출발대기/.test(String(m)))
-      .map((m) => ({ line: String(x.rtNm ?? ""), sec: parseEta(m), text: when(parseEta(m), m) })),
+      .map((m) => ({ line: String(x.rtNm ?? ""), sec: parseEta(m), text: when(parseEta(m), m), exact: parseEta(m) !== null })),
   );
   return { kind: "bus", name: String(near.stationNm ?? ""), distance: near.dist ? Math.round(Number(near.dist)) : null, lines: group(rows) };
 }
@@ -82,7 +89,7 @@ export function subwayLines(text: string): NearbyBoard["lines"] {
     // 초가 없으면 "[2]번째 전역" → 역당 2분으로 어림잡아 정렬만 (표시는 "2역 전")
     const stops = msg.match(/\[(\d+)\]번째 전역/)?.[1];
     const order = s ?? (stops ? Number(stops) * 120 : null);
-    return { line: `${line} ${dir}`.trim(), sec: order, text: s === null ? shortSubwayMsg(msg) : when(s, msg) };
+    return { line: `${line} ${dir}`.trim(), sec: order, text: s === null ? shortSubwayMsg(msg) : when(s, msg), exact: s !== null };
   });
   return group(out);
 }

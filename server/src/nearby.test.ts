@@ -19,7 +19,7 @@ test("busBoard: 가까운 정류장의 모든 노선, 빨리 오는 순 (가짜 
   const port = (srv.address() as { port: number }).port;
   const b = await busBoard(127, 37.5, "k", `http://127.0.0.1:${port}`);
   srv.close();
-  assert.deepEqual(b, { kind: "bus", name: "회기역", distance: 40, lines: [{ line: "1215", times: ["곧 도착"] }, { line: "273", times: ["6분", "12분"] }] });
+  assert.deepEqual(b, { kind: "bus", name: "회기역", distance: 40, lines: [{ line: "1215", times: ["곧 도착"], etas: [0] }, { line: "273", times: ["6분", "12분"], etas: [312, 720] }] });
 });
 
 test("subwayLines: 호선·방향별", () => {
@@ -29,8 +29,8 @@ test("subwayLines: 호선·방향별", () => {
     { subwayId: "1063", trainLineNm: "문산행 - 청량리방면", barvlDt: "50", arvlMsg2: "곧 도착" },
   ] });
   assert.deepEqual(subwayLines(text), [
-    { line: "경의중앙선 문산행", times: ["곧 도착"] },
-    { line: "1호선 청량리행", times: ["2역 전", "7분"] },
+    { line: "경의중앙선 문산행", times: ["곧 도착"], etas: [50] },
+    { line: "1호선 청량리행", times: ["2역 전", "7분"], etas: [null, 420] }, // "2역 전"은 어림값이라 안경이 줄이지 않음
   ]);
 });
 

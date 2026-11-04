@@ -127,6 +127,40 @@ class HudViewSnapshotTest {
         paparazzi.snapshot(v, "18_nearby_bus_error")
     }
 
+    /** 연결 끊김: 화면은 그대로, 오른쪽 위에 "연결 끊김 · 15초". 링으로 다음 단계를 넘기면 받아 둔 문구로 미리보기 */
+    @Test
+    fun offline() {
+        val f = fixture()
+        val v = HudView(paparazzi.context) { null }
+        v.clock = { T0 + 20_000 }
+        v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = false)
+        v.offlineSince = T0 + 5_000
+        val s = stateUpto(f, f.getJSONArray("checkpoints").getJSONObject(2).getInt("upto"))
+        v.state = s
+        v.state = v.state.copy(status = "서버 응답 없음 · 8초 뒤 재연결")
+        paparazzi.snapshot(v, "19_offline")
+        v.state = s.previewStep((s.index ?: 0) + 1).copy(status = "서버 응답 없음 · 8초 뒤 재연결")
+        paparazzi.snapshot(v, "20_offline_preview")
+    }
+
+    /** 정류장 보드: 75초째 새로 못 받음 → 남은 시간을 줄이고 "~" / 실시간 실패 이유 */
+    @Test
+    fun staleStopBoard() {
+        val f = fixture()
+        val v = HudView(paparazzi.context) { null }
+        v.viewStyle = HudView.ViewStyle.COMPACT
+        v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = false)
+        v.offlineSince = T0
+        v.clock = { T0 + 75_000 }
+        val s = stateUpto(f, f.getJSONArray("checkpoints").getJSONObject(4).getInt("upto"))
+        v.state = s
+        paparazzi.snapshot(v, "21_stop_board_stale")
+        v.offlineSince = null
+        v.clock = { T0 }
+        v.state = s.copy(stop = StopBoard("bus", "외대역앞", emptyList(), emptyList(), "실시간 정보 없음 (API 키 확인 필요)"), waiting = null, line1 = "[버스] 273 탑승 · 외대역앞")
+        paparazzi.snapshot(v, "22_stop_board_error")
+    }
+
     /** 폰에서 "맥도날드"로 시작 → 안경에서 지점 고르기 (서버 /route 를 실제 카카오로 돌려 받은 목록) */
     @Test
     fun chooseDestination() {

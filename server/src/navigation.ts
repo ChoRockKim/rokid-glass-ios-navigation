@@ -64,6 +64,8 @@ export type GlassMessage =
         boarded: boolean;
         stopsLeft: number;
         arrivals: Arrival[];
+        /** 실시간을 못 받았을 때 이유 */
+        error?: string;
       };
       /** 탈 정류장·역 근처(AT_STOP_M)에서 아직 안 탔으면 그곳의 실시간 도착. 안경 간소 화면이 오른쪽에 보여 준다 */
       stop?: StopBoard;
@@ -77,6 +79,7 @@ export type MapMessage =
       type: "map-route";
       segments: { kind: "walk" | "bus" | "subway"; points: [number, number][] }[];
       turns: [number, number][]; // 각 단계 시작점 (단계 index 와 같은 순서)
+      steps?: { line1: string; line2: string }[];
     }
   | {
       type: "map-pos";
@@ -147,8 +150,11 @@ function remainingOf(a: ActiveRoute): number | null {
 export interface StopBoard {
   kind: "bus" | "subway";
   name: string;
-  mine: { line: string; times: string[] }[];
-  others: { line: string; times: string[] }[];
+  /** times = 받은 시점 문구, etas = 초 (모르면 null). 안경은 연결이 끊겨도 etas 로 남은 시간을 줄여 보여 준다 */
+  mine: { line: string; times: string[]; etas: (number | null)[] }[];
+  others: { line: string; times: string[]; etas: (number | null)[] }[];
+  /** 실시간 조회 실패 이유 (예: "실시간 정보 없음 (서버 응답 없음)") */
+  error?: string;
 }
 
 /** 탈 정류장에서 이만큼 안이면 정류장 보드를 보낸다 */
@@ -163,18 +169,22 @@ export function whenText(a: Arrival): string {
 
 function boardOf(ride: RideInfo, now: number): StopBoard | null {
   const fresh = ride.live && ride.liveAt !== null && now - ride.liveAt < LIVE_MAX_AGE_MS;
-  if (!fresh) return null;
+  const err = ride.liveError && now - ride.liveError.at < LIVE_MAX_AGE_MS * 3 ? ride.liveError.text : undefined;
+  if (!fresh) return err ? { kind: ride.kind, name: ride.board, mine: [], others: [], error: err } : null;
   const sorted = [...ride.live!].sort((x, y) => (x.etaSec ?? 1e9) - (y.etaSec ?? 1e9));
   const group = (xs: Arrival[], per: number) => {
-    const out = new Map<string, string[]>();
+    const out = new Map<string, { times: string[]; etas: (number | null)[] }>();
     for (const a of xs) {
       // 지하철은 같은 호선이라도 방향이 다르면 따로 ("1호선 청량리행")
       const key = ride.kind === "subway" && a.direction ? `${a.line} ${a.direction.split(" - ")[0]}` : a.line;
-      const t = out.get(key) ?? [];
-      if (t.length < per) t.push(whenText(a));
+      const t = out.get(key) ?? { times: [], etas: [] };
+      if (t.times.length < per) {
+        t.times.push(whenText(a));
+        t.etas.push(a.etaSec);
+      }
       out.set(key, t);
     }
-    return [...out].map(([line, times]) => ({ line, times }));
+    return [...out].map(([line, t]) => ({ line, times: t.times, etas: t.etas }));
   };
   return {
     kind: ride.kind,
@@ -230,7 +240,10 @@ function rideView(a: ActiveRoute, step: GuideStep, now: number) {
   return {
     line1,
     line2,
-    ride: { kind: r.kind, lines: r.lines, board: r.board, alight: r.alight, boarded, stopsLeft, arrivals },
+    ride: {
+      kind: r.kind, lines: r.lines, board: r.board, alight: r.alight, boarded, stopsLeft, arrivals,
+      ...(!boarded && !arrivals.length && r.liveError ? { error: r.liveError.text } : {}),
+    },
   };
 }
 
@@ -405,6 +418,8 @@ export class Navigator {
       type: "map-route",
       segments: a.guide.map((g) => ({ kind: g.ride ? g.ride.kind : "walk", points: g.points.map(q) })),
       turns: a.guide.map((g) => q(g.points[0] ?? [0, 0])),
+      // 연결이 끊겨도 안경이 링으로 단계 문구를 넘겨 볼 수 있게 (단계 시작 시점 문구)
+      steps: a.guide.map((g) => ({ line1: g.line1, line2: g.line2 })),
     };
   }
 
@@ -536,6 +551,14 @@ export class Navigator {
     if (!step.ride || !this.active?.guide.includes(step)) return;
     step.ride.live = arrivals;
     step.ride.liveAt = this.now();
+    step.ride.liveError = null;
+    this.emit(false);
+  }
+
+  /** 실시간 조회 실패. 받아 둔 정보는 그대로 두고(90초 지나면 안 씀) 이유만 붙인다 */
+  setArrivalsError(step: GuideStep, text: string) {
+    if (!step.ride || !this.active?.guide.includes(step)) return;
+    step.ride.liveError = { text, at: this.now() };
     this.emit(false);
   }
 

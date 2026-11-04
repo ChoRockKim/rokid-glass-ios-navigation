@@ -96,6 +96,8 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         val routes: List<RouteCard>? = null,
         /** "버스·지하철 시간" 화면이면 주변 정류장·역 보드 (null 이 아니면 items 대신 그린다) */
         val boards: List<Board>? = null,
+        /** boards 를 받은 시각 (남은 시간 줄이기 기준) */
+        val boardsAt: Long? = null,
     )
 
     /** 주변 정류장·역 하나 */
@@ -134,6 +136,10 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
 
     /** 잠깐 보여 줄 알림 (왼쪽 아래). 예: "다시 찾음 · 320m" */
     var notice: String? = null
+        set(value) { field = value; invalidate() }
+
+    /** 서버 연결이 끊긴 시각 (연결돼 있으면 null). 길안내 화면 오른쪽 위에 "연결 끊김 · 15초" */
+    var offlineSince: Long? = null
         set(value) { field = value; invalidate() }
 
     /** 시계 (테스트에서 바꿈) */
@@ -279,16 +285,21 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         if (pairCode == null) {
             val top = if (s.progress.isNotEmpty() && s.etaAt != null) "${s.progress} · ${clockText(s.etaAt)} 도착" else s.progress
             canvas.drawText(top, 18f, 14f + 13f, small)
-            canvas.drawText(s.destination, W - 18f - small.measureText(s.destination), 14f + 13f, small)
+            val off = offlineSince
+            if (off != null && !s.idle) {
+                // 연결이 끊겨도 화면은 그대로 두고 오른쪽 위에만 알린다 (일반 지도 앱의 오프라인 배너처럼)
+                val t = "연결 끊김 · ${ageText(now - off).removeSuffix(" 전")}" + if (s.offlinePreview) " · 미리보기" else ""
+                canvas.drawText(t, W - 18f - offlinePaint.measureText(t), 14f + 13f, offlinePaint)
+            } else canvas.drawText(s.destination, W - 18f - small.measureText(s.destination), 14f + 13f, small)
         }
 
         // 안내 두 줄
-        val line1 = pairCode?.let { "연결 코드 $it" } ?: s.line1
+        val line1 = pairCode?.let { "연결 코드 $it" } ?: s.line1At(now)
         val line2 = if (pairCode != null) "폰 단축어 \"안경 연결\"에 입력" else s.line2
         big.color = if (s.warn && pairCode == null) Color.WHITE else if (s.idle && pairCode == null) dim else green
         mid.color = if (s.idle && pairCode == null) dim else green
-        if (compact && s.stop != null && (s.stop.mine.isNotEmpty() || s.stop.others.isNotEmpty())) {
-            drawStopBoard(canvas, s.stop)
+        if (compact && s.stop != null && (s.stop.mine.isNotEmpty() || s.stop.others.isNotEmpty() || s.stop.error != null)) {
+            drawStopBoard(canvas, s.stop, now - s.stepAt)
         } else if (compact) {
             // 간소 화면: 오른쪽 아래에 작은 글자 (오른쪽 정렬, 아래 상태 줄 바로 위에서 끝나게)
             smallBig.color = big.color
@@ -319,21 +330,31 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
             else -> null
         }
         val left = debug ?: notice ?: stale
-        if (left != null) canvas.drawText(left, 18f, bottom, if (debug == null) small else tiny)
-        else if (s.roads != null && pairCode == null && mapMode != MapMode.OFF) canvas.drawText("© OpenStreetMap", 18f, bottom, tiny)
-        drawDeviceStatus(canvas, bottom, s.status)
+        var leftEnd = 18f
+        if (left != null) {
+            val p = if (debug == null) small else tiny
+            canvas.drawText(left, 18f, bottom, p)
+            leftEnd += p.measureText(left)
+        } else if (s.roads != null && pairCode == null && mapMode != MapMode.OFF) {
+            canvas.drawText("© OpenStreetMap", 18f, bottom, tiny)
+            leftEnd += tiny.measureText("© OpenStreetMap")
+        }
+        drawDeviceStatus(canvas, bottom, s.status, leftEnd + 12f)
         canvas.restore()
 
         // 위치가 미끄러지는 중이거나 센서 방향을 쓰면 계속 다시 그림. 길안내 중이면 1초마다 (위치 경과 시간 갱신)
         if (glideFrom != null || (sensor != null && pos != null && mapMode != MapMode.OFF)) postInvalidateOnAnimation()
-        else if (navigating) postInvalidateDelayed(1000)
+        else if (navigating || offlineSince != null) postInvalidateDelayed(1000)
         else postInvalidateDelayed(15_000) // 오른쪽 아래 시각
     }
 
     /** 메인 화면: 제목·버전, 항목(선택된 것만 밝게, ▶ 표시), 아래 안내 문구 */
     private fun drawMenu(canvas: Canvas, m: Menu) {
         if (m.routes != null) return drawRouteCards(canvas, m, m.routes)
-        if (m.boards != null) return drawBoards(canvas, m, m.boards)
+        if (m.boards != null) {
+            postInvalidateDelayed(1000) // 남은 시간 줄이기
+            return drawBoards(canvas, m, m.boards)
+        }
         canvas.drawText(m.title ?: "길안내 · v${BuildConfig.VERSION_NAME}", 18f, 14f + 13f, small)
         // 안내 글씨(17)로 27 간격, 한 화면에 7개까지. 더 많으면 선택한 항목이 보이게 넘기고 오른쪽에 ▲▼
         val visible = 7
@@ -468,9 +489,10 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
                     val t = TextUtils.ellipsize(b.error ?: "도착 정보 없음", boardOther, colW, TextUtils.TruncateAt.END)
                     canvas.drawText(t, 0, t.length, left, y, boardOther)
                 }
+                val age = clock() - (m.boardsAt ?: clock())
                 for (l in b.lines) {
                     if (y > bottom - 22f) break
-                    val times = l.times.joinToString(" · ")
+                    val times = l.timesAt(age).joinToString(" · ")
                     val tw = boardLineTime.measureText(times)
                     canvas.drawText(times, right - tw, y, boardLineTime)
                     val label = if (b.kind == "bus" && l.line.isNotEmpty() && l.line.last().isDigit()) "${l.line}번" else l.line
@@ -484,6 +506,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         drawDeviceStatus(canvas, bottom, "")
     }
 
+    private val offlinePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13f; color = Color.WHITE; alpha = 220; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
     private val boardLine = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13f; typeface = Typeface.DEFAULT_BOLD; color = green; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
     private val boardLineTime = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13f; color = green; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
 
@@ -498,7 +521,8 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     private val subwayLabel = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 11f; typeface = Typeface.DEFAULT_BOLD }
 
     /** 오른쪽 아래: [연결 오류 문구]  Wi-Fi ●  ▭82% (오른쪽에서 왼쪽으로 쌓는다) */
-    private fun drawDeviceStatus(canvas: Canvas, baseline: Float, status: String) {
+    /** leftLimit: 이보다 왼쪽으로는 안 그린다 (왼쪽 아래 글자와 겹치지 않게 연결 상태 문구를 자른다) */
+    private fun drawDeviceStatus(canvas: Canvas, baseline: Float, status: String, leftLimit: Float = 18f) {
         var x = W - 18f
         val dv = device
         // 오른쪽 끝부터: 배터리 → 네트워크 → 새 버전 → 연결 오류
@@ -536,7 +560,10 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
             canvas.drawText(label, x, baseline, updatePaint)
             x -= 8f
         }
-        if (status.isNotEmpty()) canvas.drawText(status, x - tiny.measureText(status), baseline, tiny)
+        if (status.isNotEmpty() && x - leftLimit > 20f) {
+            val t = TextUtils.ellipsize(status, tiny, x - leftLimit, TextUtils.TruncateAt.END)
+            canvas.drawText(t, 0, t.length, x - tiny.measureText(t, 0, t.length), baseline, tiny)
+        }
     }
 
     /**
@@ -546,15 +573,16 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
      *                     1215번  곧 도착  ← 나머지: 작고 흐리게, 한 줄에 하나
      *                        120번  5분
      */
-    private fun drawStopBoard(canvas: Canvas, b: StopBoard) {
+    private fun drawStopBoard(canvas: Canvas, b: StopBoard, ageMs: Long) {
         val right = W - 18f
         val width = right - COMPACT_TEXT_X
         val name = { l: String -> if (b.kind == "bus" && l.isNotEmpty() && l.last().isDigit()) "${l}번" else l }
         val headH = 17f; val mineH = 19f; val otherH = 16f; val gap = 4f
         val top = 40f; val bottom = H - 26f
         val mine = b.mine.take(3)
+        val errorRow = if (b.error != null && mine.isEmpty() && b.others.isEmpty()) 1 else 0
         // 들어가는 만큼만 (위아래 줄과 겹치지 않게)
-        val fixed = headH + mine.size * mineH + (if (b.others.isNotEmpty()) gap else 0f)
+        val fixed = headH + mine.size * mineH + errorRow * otherH + (if (b.others.isNotEmpty()) gap else 0f)
         val others = b.others.take(((bottom - top - fixed) / otherH).toInt().coerceAtLeast(0))
         val total = fixed + others.size * otherH
         var y = top + ((bottom - top) - total) / 2   // 세로 가운데
@@ -571,9 +599,10 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         val head = TextUtils.ellipsize("${if (b.kind == "bus") "[버스]" else "[지하철]"} ${b.name}", boardHead, width, TextUtils.TruncateAt.END)
         canvas.drawText(head, 0, head.length, right - boardHead.measureText(head, 0, head.length), y + headH - 5f, boardHead)
         y += headH
-        for (r in mine) row(name(r.line), r.times.joinToString(" · "), boardMine, boardMineTime, mineH)
+        if (errorRow == 1) row("", b.error ?: "", boardOther, boardOther, otherH)
+        for (r in mine) row(name(r.line), r.timesAt(ageMs).joinToString(" · "), boardMine, boardMineTime, mineH)
         if (others.isNotEmpty()) y += gap
-        for (r in others) row(name(r.line), r.times.firstOrNull() ?: "", boardOther, boardOther, otherH)
+        for (r in others) row(name(r.line), r.timesAt(ageMs).firstOrNull() ?: "", boardOther, boardOther, otherH)
     }
 
     private val boardHead = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 12f; color = dim; setShadowLayer(3f, 0f, 0f, Color.BLACK) }

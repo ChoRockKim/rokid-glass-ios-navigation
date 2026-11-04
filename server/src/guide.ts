@@ -27,6 +27,8 @@ export interface RideInfo {
   boardPoint: LonLat | null;
   live: Arrival[] | null; // 실시간 도착. 아직 없으면 null
   liveAt: number | null; // 갱신 시각 (ms)
+  /** 마지막 실시간 조회가 실패했으면 그 이유와 시각 (성공하면 지운다) */
+  liveError?: { text: string; at: number } | null;
 }
 
 export interface GuideStep {

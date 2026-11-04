@@ -77,6 +77,8 @@ class MainActivity : Activity() {
                 }
             },
             onPairCode = { hud.pairCode = it },
+            onNotice = { showNotice(it) },
+            onConnection = { hud.offlineSince = it },
         )
         updater = Updater(this, BuildConfig.SERVER_BASE, token = { prefs.getString("glassToken", null) ?: BuildConfig.DEVICE_TOKEN.takeIf { it.isNotEmpty() } }) { note ->
             hud.update = updater.available?.versionName
@@ -120,7 +122,12 @@ class MainActivity : Activity() {
             caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> "셀룰러"
             else -> "네트워크"
         }
-        hud.post { hud.device = hud.device.copy(network = name) }
+        val internet = caps?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        hud.post {
+            hud.device = hud.device.copy(network = name)
+            // 네트워크가 다시 잡히면 재연결 대기(최대 30초)를 건너뛰고 바로 연결
+            if (internet) client.kick()
+        }
     }
 
     override fun onResume() {
@@ -183,7 +190,7 @@ class MainActivity : Activity() {
                         val ls = o.optJSONArray("lines") ?: org.json.JSONArray()
                         HudView.Board(
                             o.optString("kind"), o.optString("name"), if (o.isNull("distance")) null else o.optInt("distance"),
-                            List(ls.length()) { j -> ls.getJSONObject(j).let { l -> StopBoard.Line(l.optString("line"), l.optJSONArray("times")?.let { t -> List(t.length()) { t.getString(it) } } ?: emptyList()) } },
+                            List(ls.length()) { j -> StopBoard.lineOf(ls.getJSONObject(j)) },
                             if (o.has("error")) o.optString("error") else null,
                         )
                     }
@@ -218,7 +225,13 @@ class MainActivity : Activity() {
         }
     }
 
-    private val refreshNearby = Runnable { if (sub is Sub.Nearby && hud.menu != null) client.send(JSONObject().put("type", "nearby")) }
+    // 끊겨 있으면 이번 갱신은 건너뛰고(남은 시간은 안경이 줄여 보여 줌) 다음 20초에 다시
+    private val refreshNearby = Runnable {
+        if (sub is Sub.Nearby && hud.menu != null) {
+            if (!client.send(JSONObject().put("type", "nearby"))) hud.postDelayed(refreshNearbyAgain, 20_000)
+        }
+    }
+    private val refreshNearbyAgain: Runnable get() = refreshNearby
 
     /** 메인 메뉴 아래 화면. null 이면 메인 메뉴 */
     private var sub: Sub? = null
@@ -236,7 +249,7 @@ class MainActivity : Activity() {
             Sub.Loading -> HudView.Menu(listOf("불러오는 중…"), title = "즐겨찾기", hint = hint)
             is Sub.Nearby -> HudView.Menu(
                 emptyList(), title = "버스·지하철 시간" + (s.at?.let { " · ${HudView.clockText(it)} 기준" } ?: ""),
-                note = s.note, hint = "탭 새로고침 · 20초마다 갱신 · 뒤로 이전", boards = s.boards ?: emptyList(),
+                note = s.note, hint = "탭 새로고침 · 20초마다 갱신 · 뒤로 이전", boards = s.boards ?: emptyList(), boardsAt = s.at,
             )
             is Sub.Categories ->
                 if (s.data.items.isEmpty()) HudView.Menu(listOf("등록된 장소 없음"), title = "즐겨찾기", note = "폰 브라우저 /places 에서 추가", hint = hint)
@@ -251,7 +264,7 @@ class MainActivity : Activity() {
         if (s is Sub.Nearby) {
             when (input) {
                 Input.BACK -> { sub = null; hud.removeCallbacks(refreshNearby); hud.menu = HudView.Menu(menuLabels(), Item.NEARBY.ordinal) }
-                else -> client.send(JSONObject().put("type", "nearby"))
+                else -> request(JSONObject().put("type", "nearby"), "버스·지하철 시간")
             }
             return
         }
@@ -268,10 +281,10 @@ class MainActivity : Activity() {
                 is Sub.Categories -> s.data.categories.getOrNull(m.selected)?.let { showSub(Sub.Places(s.data, it, m.selected), 0) }
                 // 서버가 기존 길찾기와 같은 규칙으로: 직선 800m 안이면 도보, 아니면 대중교통 후보(안경에서 고름), 대중교통이 없으면 도보
                 is Sub.Places -> s.items.getOrNull(m.selected)?.let { fav ->
-                    client.send(JSONObject().put("type", "go").put("id", fav.id).put("mode", "auto"))
                     sub = null
                     hud.menu = null
                     showNotice("${fav.name} 경로 찾는 중…")
+                    request(JSONObject().put("type", "go").put("id", fav.id).put("mode", "auto"), "${fav.name} 안내")
                 }
             }
         }
@@ -279,6 +292,11 @@ class MainActivity : Activity() {
 
     /** 지금 띄운 선택지 번호 (서버 choose id). null 이면 일반 메뉴 */
     private var choosing: Int? = null
+
+    /** 끊겨 있으면 모아 두었다가 연결되면 보낸다 (30초 지나면 버림). 바로 못 보냈으면 알림 */
+    private fun request(json: JSONObject, label: String) {
+        if (!client.sendWhenConnected(json, label)) showNotice("연결 끊김 · 연결되면 보냄: $label")
+    }
 
     private fun answerChoice(id: Int, index: Int, label: String?) {
         client.send(JSONObject().put("type", "chosen").put("id", id).put("index", index))
@@ -346,8 +364,16 @@ class MainActivity : Activity() {
                     hud.viewStyle = if (hud.viewStyle == HudView.ViewStyle.FULL) HudView.ViewStyle.COMPACT else HudView.ViewStyle.FULL
                     prefs.edit().putString("viewStyle", hud.viewStyle.name).apply()
                 }
-                Input.NEXT -> client.send(JSONObject().put("type", "next"))
-                Input.PREV -> client.send(JSONObject().put("type", "prev"))
+                // 연결돼 있으면 서버에 (내 위치는 그대로, 지도만 그 단계로). 끊겨 있으면 받아 둔 단계 문구로 안경 혼자 미리보기
+                Input.NEXT, Input.PREV -> {
+                    val type = if (input == Input.NEXT) "next" else "prev"
+                    if (!client.send(JSONObject().put("type", type))) {
+                        val st = hud.state
+                        val i = st.index
+                        if (i != null && st.steps.isNotEmpty()) hud.state = st.previewStep(i + if (input == Input.NEXT) 1 else -1)
+                        else showNotice("연결 끊김 · 단계 정보 없음")
+                    }
+                }
                 Input.BACK -> { stopArmed = false; hud.menu = HudView.Menu(menuLabels()) }
             }
             return
@@ -368,25 +394,25 @@ class MainActivity : Activity() {
             Item.BACK_TO_NAV -> hud.menu = null
             Item.FAVORITES -> {
                 showSub(Sub.Loading, 0)
-                client.send(JSONObject().put("type", "favorites"))
+                request(JSONObject().put("type", "favorites"), "즐겨찾기 목록")
             }
             Item.NEARBY -> {
-                showSub(Sub.Nearby(null, "주변 정류장·역 찾는 중…", null), 0)
-                client.send(JSONObject().put("type", "nearby"))
+                showSub(Sub.Nearby(null, if (client.connected) "주변 정류장·역 찾는 중…" else "연결 끊김 · 연결되면 불러옴", null), 0)
+                request(JSONObject().put("type", "nearby"), "버스·지하철 시간")
             }
             Item.STOP -> when {
                 !navigating -> hud.menu = m.copy(note = "진행 중인 경로 없음")
                 !stopArmed -> { stopArmed = true; hud.menu = m.copy(note = "한 번 더 누르면 안내를 끝냅니다") }
                 else -> {
                     stopArmed = false
-                    client.send(JSONObject().put("type", "stop"))
+                    request(JSONObject().put("type", "stop"), "안내 종료")
                     hud.menu = null
                 }
             }
             Item.REROUTE -> {
                 if (!navigating) { hud.menu = m.copy(note = "진행 중인 경로 없음"); return }
-                client.send(JSONObject().put("type", "reroute"))
                 hud.menu = m.copy(note = "다시 찾는 중…")
+                request(JSONObject().put("type", "reroute"), "경로 다시 찾기")
             }
             Item.RECALIBRATE -> {
                 heading.reset()

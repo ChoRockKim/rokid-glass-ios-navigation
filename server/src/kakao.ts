@@ -3,8 +3,10 @@
 
 import { fetch } from "undici";
 import { dispatcher } from "./proxy.js";
+import { faultOn, withRetry } from "./faults.js";
 
-const BASE = "https://dapi.kakao.com";
+// 테스트에서 가짜 서버로 바꿀 수 있게
+const BASE = process.env.KAKAO_BASE ?? "https://dapi.kakao.com";
 
 export interface Place {
   name: string;
@@ -37,14 +39,24 @@ function authHeader(key: string) {
   return { Authorization: `KakaoAK ${key}` };
 }
 
+/** 카카오 호출. 타임아웃·연결 실패·5xx 는 0.5초 뒤 한 번 더 (400대는 바로 실패) */
 async function getJson(url: URL, key: string): Promise<unknown> {
-  const res = await fetch(url, { headers: authHeader(key), signal: AbortSignal.timeout(8000), dispatcher });
-  const body = await res.json().catch(() => null);
-  if (!res.ok) {
-    const msg = (body as { message?: string } | null)?.message ?? res.statusText;
-    throw new KakaoError(`카카오 API ${res.status}: ${msg}`);
+  if (faultOn("kakao")) throw new KakaoError("카카오 API 응답 없음 (오류 주입)");
+  const once = async () => {
+    const res = await fetch(url, { headers: authHeader(key), signal: AbortSignal.timeout(8000), dispatcher });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      const msg = (body as { message?: string } | null)?.message ?? res.statusText;
+      throw new KakaoError(`카카오 API ${res.status}: ${msg}`);
+    }
+    return body;
+  };
+  try {
+    return await withRetry(once);
+  } catch (e) {
+    if (e instanceof KakaoError) throw e;
+    throw new KakaoError(`카카오 API 응답 없음 (${e instanceof Error ? e.message : String(e)})`);
   }
-  return body;
 }
 
 export async function searchPlace(query: string, key: string): Promise<Place | null> {

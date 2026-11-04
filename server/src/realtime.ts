@@ -6,6 +6,7 @@
 //   응답이 JSON 이든 XML 이든 읽도록 관대하게 파싱한다.
 import { fetch } from "undici";
 import { dispatcher } from "./proxy.js";
+import { faultOn, InjectedFault } from "./faults.js";
 import type { Arrival, GuideStep, RideInfo } from "./guide.js";
 import type { Navigator } from "./navigation.js";
 
@@ -16,6 +17,7 @@ export interface ArrivalProvider {
 }
 
 export async function getText(url: string): Promise<string> {
+  if (faultOn("realtime")) throw new InjectedFault("realtime");
   const res = await fetch(url, { signal: AbortSignal.timeout(8000), dispatcher });
   const text = await res.text();
   if (!res.ok) throw new Error(`${new URL(url).host} ${res.status}: ${text.slice(0, 200)}`);
@@ -156,6 +158,15 @@ export function seoulBusProvider(key: string, base = "http://ws.bus.go.kr/api/re
   };
 }
 
+/** 실시간 실패 → 안경에 보여 줄 짧은 이유 */
+export function realtimeReason(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e);
+  if (/ 401|키|key/i.test(m)) return "실시간 정보 없음 (API 키 확인 필요)";
+  if (/오류 주입/.test(m)) return "실시간 정보 없음 (오류 주입)";
+  if (/Timeout|AbortError|fetch failed|ECONN|ETIMEDOUT|UND_ERR| 5\d\d/.test(m)) return "실시간 정보 없음 (서버 응답 없음)";
+  return "실시간 정보 없음";
+}
+
 export const POLL_MS = Number(process.env.REALTIME_POLL_MS ?? 20_000);
 const FAIL_BACKOFF_MS = 120_000;
 
@@ -188,6 +199,8 @@ export function startRealtimePoller(nav: Navigator, providers: ArrivalProvider[]
       // 키 미활성 등으로 계속 실패할 때 20초마다 두드리지 않도록 잠시 쉰다
       lastAt = Date.now() + FAIL_BACKOFF_MS - POLL_MS;
       log(`realtime ${provider.name} 실패 (${FAIL_BACKOFF_MS / 1000}s 뒤 재시도): ${e instanceof Error ? e.message : String(e)}`);
+      // 안경에 이유를 알린다 (정보가 그냥 사라지지 않게)
+      nav.setArrivalsError(up.step, realtimeReason(e));
     } finally {
       busy = false;
     }

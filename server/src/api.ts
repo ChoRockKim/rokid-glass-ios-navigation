@@ -28,6 +28,8 @@ const MAX_BODY = 5 * 1024 * 1024; // Overland 배치(최대 1000점) 여유
 /** 연속 이탈이 이만큼이면 현재 위치에서 재탐색 */
 const REROUTE_AFTER = 3;
 const REROUTE_COOLDOWN_MS = 30_000;
+/** 같은 단축어 요청을 다시 계산하지 않는 시간 */
+export const DEDUPE_MS = 30_000;
 /** 대중교통을 요청해도 목적지가 이보다 가까우면(직선) 도보로 바로 안내 */
 export const WALK_ONLY_M = 800;
 
@@ -219,6 +221,26 @@ export function createApi(deps: ApiDeps) {
     return `${fav.name} 안내 시작`;
   }
 
+  /**
+   * 단축어 중복 방지: 네트워크가 끊겨 단축어를 다시 실행하면 같은 요청이 또 온다.
+   * 같은 경로·목적지·출발 위치(약 10m)로 DEDUPE_MS 안에 오면 다시 계산하지 않고 지난 응답을 그대로 준다
+   */
+  const recent = new Map<string, { at: number; body: unknown }>();
+  function dedupeKey(route: string, b: Record<string, unknown>) {
+    const r4 = (v: unknown) => (num(v) === undefined ? "" : num(v)!.toFixed(4));
+    return [route, String(b.to ?? "").trim(), String(b.from ?? "").trim(), r4(b.lat), r4(b.lon)].join("|");
+  }
+  function replay(key: string): unknown | undefined {
+    const hit = recent.get(key);
+    if (hit && Date.now() - hit.at < DEDUPE_MS) return hit.body;
+    recent.delete(key);
+    return undefined;
+  }
+  function remember(key: string, body: unknown) {
+    for (const [k, v] of recent) if (Date.now() - v.at >= DEDUPE_MS) recent.delete(k);
+    recent.set(key, { at: Date.now(), body });
+  }
+
   /** 단축어 /transit/select 가 대중교통 후보 대신 받을 답 (도보로 대신 시작했거나 안경에서 고르는 중) */
   let selectReply: { at: number; speech: string } | null = null;
 
@@ -238,8 +260,11 @@ export function createApi(deps: ApiDeps) {
       nav.reroute(from, route);
       log(`rerouted: ${route.totalDistance}m, ${nav.current?.guide.length} steps`);
       notify?.(`:arrows_counterclockwise: 경로를 벗어나 다시 찾았습니다 · ${a.to.name}까지 ${formatDistance(route.totalDistance)}`);
+      chooser?.notice(`경로 다시 찾음 · ${formatDistance(route.totalDistance)}`);
     } catch (e) {
       log(`reroute failed: ${e instanceof Error ? e.message : String(e)}`);
+      // 기존 경로는 그대로 두고, 이탈이 계속되면 REROUTE_COOLDOWN_MS 뒤 다시 시도한다
+      chooser?.notice("재탐색 실패 · 기존 경로 유지");
     } finally {
       rerouting = false;
     }
@@ -362,6 +387,17 @@ export function createApi(deps: ApiDeps) {
 
       if (route === "POST /route") {
         const b = body as Record<string, unknown>;
+        const dk = dedupeKey(route, b);
+        const again = replay(dk);
+        if (again !== undefined) {
+          log(`api ${route}: 같은 요청 ${DEDUPE_MS / 1000}초 안에 다시 옴 → 지난 응답`);
+          send(res, 200, again);
+          return true;
+        }
+        const reply = (x: unknown) => {
+          remember(dk, x);
+          send(res, 200, x);
+        };
         const to = typeof b.to === "string" ? b.to.trim() : "";
         if (!to) throw new HttpError(400, "to is required");
         let from: PlaceInput | null = typeof b.from === "string" && b.from.trim() ? b.from.trim() : null;
@@ -384,17 +420,28 @@ export function createApi(deps: ApiDeps) {
             await startWalk(f, t);
             return `${t.name} 안내 시작`;
           });
-          send(res, 200, { active: false, choosing: true, to, speech: `안경에서 ${to} ${cands.length}곳 중 고르세요.` });
+          reply({ active: false, choosing: true, to, speech: `안경에서 ${to} ${cands.length}곳 중 고르세요.` });
           return true;
         }
         const speech = await startWalk(f, cands[0]!);
         // 단축어가 바로 읽어 줄 수 있게 speech 문구도 준다
-        send(res, 200, { ...summary(), speech });
+        reply({ ...summary(), speech });
         return true;
       }
 
       if (route === "POST /transit") {
         const b = body as Record<string, unknown>;
+        const dk = dedupeKey(route, b);
+        const again = replay(dk);
+        if (again !== undefined) {
+          log(`api ${route}: 같은 요청 ${DEDUPE_MS / 1000}초 안에 다시 옴 → 지난 응답`);
+          send(res, 200, again);
+          return true;
+        }
+        const reply = (x: unknown) => {
+          remember(dk, x);
+          send(res, 200, x);
+        };
         const to = typeof b.to === "string" ? b.to.trim() : "";
         if (!to) throw new HttpError(400, "to is required");
         let from: PlaceInput | null = typeof b.from === "string" && b.from.trim() ? b.from.trim() : null;
@@ -423,7 +470,7 @@ export function createApi(deps: ApiDeps) {
             await startTransitOption(plan, k);
             return `${t.name} 안내 시작`;
           });
-          send(res, 200, { choosing: true, to, options: ["① 안경에서 고르는 중"], speech: `안경에서 ${to} ${cands.length}곳 중 고르세요.` });
+          reply({ choosing: true, to, options: ["① 안경에서 고르는 중"], speech: `안경에서 ${to} ${cands.length}곳 중 고르세요.` });
           return true;
         }
         const t = cands[0]!;
@@ -434,7 +481,7 @@ export function createApi(deps: ApiDeps) {
           selectReply = { at: Date.now(), speech: "도보로 안내 중입니다." };
           const a = nav.current!;
           const min = formatMinutes(a.route.totalTime);
-          send(res, 200, {
+          reply({
             from: f.name,
             to: t.name,
             walking: true,
@@ -446,7 +493,7 @@ export function createApi(deps: ApiDeps) {
         }
         selectReply = null;
         pendingTransit.set(plan);
-        send(res, 200, {
+        reply({
           from: plan.from.name,
           to: plan.to.name,
           options: plan.options.map(summarizeOption),
