@@ -66,7 +66,12 @@ export type GlassMessage =
   | { type: "idle"; text: string };
 
 /** 안경에서 받는 메시지 */
-export type GlassInput = { type: "next" } | { type: "prev" } | { type: "sync" };
+export type GlassInput =
+  | { type: "next" }
+  | { type: "prev" }
+  | { type: "sync" }
+  /** 안경 앱이 navigator.geolocation 으로 받은 위치 (AIUI). 출처(안경/폰)는 미확인 */
+  | { type: "position"; lat: number; lon: number; acc?: number; ts?: number };
 
 /** `강남역 > 선릉역`, `강남역 -> 선릉역`, `강남역 → 선릉역`, `강남역에서 선릉역` */
 export function parseRouteArgs(text: string): { from: string; to: string } | null {

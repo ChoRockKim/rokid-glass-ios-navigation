@@ -2,7 +2,7 @@
 // 인증: `Authorization: Bearer <GLASS_TOKEN>` 헤더 우선, 헤더를 못 넣는 클라이언트용으로 ?token= 도 받는다.
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
-import type { GlassInput, Navigator } from "./navigation.js";
+import type { GlassInput, Navigator, Position } from "./navigation.js";
 import { safeEqual, tokenFrom } from "./auth.js";
 
 export function startGlassServer(opts: {
@@ -12,8 +12,11 @@ export function startGlassServer(opts: {
   log: (m: string) => void;
   /** 폰용 HTTP API. 처리했으면 true */
   api?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
+  /** 안경이 보낸 위치를 반영 (재탐색 포함). 없으면 nav 에 바로 */
+  onPositions?: (p: Position[]) => unknown;
 }): Server {
   const { port, token, nav, log, api } = opts;
+  const onPositions = opts.onPositions ?? ((p: Position[]) => nav.updatePositions(p));
 
   const http = createServer(async (req, res) => {
     if (req.url === "/healthz") {
@@ -56,6 +59,9 @@ export function startGlassServer(opts: {
       if (msg.type === "next") nav.move(1);
       else if (msg.type === "prev") nav.move(-1);
       else if (msg.type === "sync") send(ws, nav.snapshot());
+      else if (msg.type === "position" && Number.isFinite(msg.lat) && Number.isFinite(msg.lon)) {
+        onPositions([{ lat: msg.lat, lon: msg.lon, acc: msg.acc, ts: msg.ts ?? Date.now() }]);
+      }
     });
     ws.on("close", () => log(`glass disconnected, clients=${wss.clients.size}`));
   });

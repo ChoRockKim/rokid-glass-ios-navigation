@@ -1,0 +1,8 @@
+{
+  "pages": ["pages/index/index"],
+  "permissions": ["GEOLOCATION"],
+  "window": {
+    "navigationBarTitleText": "길안내",
+    "viewport": { "width": "device-width" }
+  }
+}

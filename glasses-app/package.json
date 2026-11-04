@@ -1,0 +1,8 @@
+{
+  "name": "rokid-route-glasses",
+  "version": "0.1.0",
+  "description": "Rokid Glasses 길안내 표시 앱 (AIUI). 서버(route-server)의 안내를 한 줄씩 보여 주고 탭으로 다음 단계",
+  "main": "app.js",
+  "type": "module",
+  "dependencies": {}
+}

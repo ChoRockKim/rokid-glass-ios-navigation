@@ -48,6 +48,15 @@
 - 서울역→남대문시장(972m, 13단계)에서 `왼쪽길로 19m 이동` 문구가 나왔다. **좌/우 문구가 아예 없는 건 아니다.** 다만 빈도는 낮다.
 - 6m·18m 같은 짧은 횡단보도 단계가 많다. 안경에서 탭으로 넘기기엔 잘게 쪼개져 있어 병합 여부를 실기에서 판단할 것.
 
+## AIUI 문서 확인 (2026-11-04, jsar-project/AIUI @00c6ec7 문서 읽기)
+- WebSocket: `new WebSocket('wss://…')` 지원. `wx.connectSocket({url, header})` 는 헤더 지정 가능.
+- 입력: Page `onKeyUp(event)` 의 `event.code` — `Enter`(확인), `ArrowUp`/`ArrowDown`, `Backspace`(뒤로). 템플 조작과의 정확한 대응은 시뮬레이터/실기 확인 필요.
+- 화면: 논리 480×352, 단색 녹색/컬러 공용.
+- **네트워크: "AIUI on Rokid Glasses connects to the mobile app over Bluetooth and carries HTTPS traffic through that link."** → 안경 앱은 폰 핫스팟 없이 폰 앱 경유로 인터넷에 나갈 수 있다 (WebSocket 도 그런지는 미확인). 열린 문제 2 에 영향.
+- 위치: `navigator.geolocation` + `app.json.permissions: ["GEOLOCATION"]`. 위치 출처(안경/폰) 미확인.
+- AIUI Studio 에서 GitHub 저장소의 디렉터리를 가져와 브라우저 시뮬레이터(템플 조작 포함)로 실행 가능.
+- `glasses-app/` 첫 버전 작성, `aix pack` 통과.
+
 ## 열린 문제
 1. 안경 기기 보유 여부와 앱 설치 경로(개발 케이블 얼리액세스 또는 CXR-M).
 2. 이동 중 네트워크: iPhone 개인용 핫스팟은 연결 기기가 없으면 잠들어 안경이 붙지 못함. 설정 화면을 켜 둬야 한다고 `Rokid_Claude` 문서에 있음.

@@ -140,8 +140,15 @@ export function createApi(deps: ApiDeps) {
     };
   }
 
+  /** 위치 반영 + 필요하면 재탐색. HTTP(/location)와 안경 WebSocket 이 같이 쓴다 */
+  function ingest(positions: Position[]) {
+    const r = nav.updatePositions(positions);
+    void maybeReroute(r.offRouteCount);
+    return r;
+  }
+
   /** 처리했으면 true. /glass, /healthz 등은 false 를 돌려 다른 핸들러로 넘긴다 */
-  return async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+  const handle = async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = new URL(req.url ?? "/", "http://localhost");
     const route = `${req.method} ${url.pathname}`;
     if (!["POST /location", "POST /route", "POST /transit", "POST /transit/select", "POST /nav", "GET /status"].includes(route)) return false;
@@ -163,11 +170,10 @@ export function createApi(deps: ApiDeps) {
       if (route === "POST /location") {
         const positions = parsePositions(body);
         if (positions === null) throw new HttpError(400, "unknown location format");
-        const r = nav.updatePositions(positions);
+        const r = ingest(positions);
         if (positions.length) {
           log(`location x${positions.length} ${r.accepted ? `s=${r.progress?.toFixed(0)} off=${r.offset?.toFixed(0)}m step=${(r.index ?? 0) + 1}${r.offRoute ? " OFF" : ""}` : r.reason}`);
         }
-        void maybeReroute(r.offRouteCount);
         // OwnTracks 는 응답으로 JSON 배열(보낼 명령 목록)을 기대한다. Overland 는 {"result":"ok"} 가 필요
         if (typeof (body as Record<string, unknown>)._type === "string") send(res, 200, []);
         else send(res, 200, { result: "ok", ...r });
@@ -271,4 +277,5 @@ export function createApi(deps: ApiDeps) {
     }
     return false;
   };
+  return Object.assign(handle, { ingest });
 }
