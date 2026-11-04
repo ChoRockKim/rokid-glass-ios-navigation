@@ -54,7 +54,7 @@ function walkLegStep(l: TransitLeg, next: TransitLeg | undefined): GuideStep {
   const isTransfer = /환승/.test(l.guidance);
   const target = next?.stops[0] ?? l.stops[l.stops.length - 1] ?? null;
   const exit = exitOf(l.guidance);
-  const line1 = isTransfer ? `🚶 ${l.stops[0] ?? ""} 환승` : `🚶 ${target ?? ""}까지 도보${exit ? ` · ${exit}` : ""}`;
+  const line1 = isTransfer ? `[도보] ${l.stops[0] ?? ""} 환승` : `[도보] ${target ?? ""}까지 도보${exit ? ` · ${exit}` : ""}`;
   return {
     turn: "walk",
     angle: null,
@@ -76,7 +76,7 @@ export function rideStep(l: TransitLeg): GuideStep {
   const board = l.stops[0] ?? "";
   const alight = l.stops[l.stops.length - 1] ?? "";
   const lines = l.lines.length ? l.lines : [l.guidance.split(" (")[0] ?? ""];
-  const icon = kind === "bus" ? "🚌" : "🚇";
+  const icon = kind === "bus" ? "[버스]" : "[지하철]";
   return {
     turn: kind,
     angle: null,
@@ -117,7 +117,7 @@ export async function buildTransitGuide(plan: TransitPlan, option: TransitRoute,
     const w = await walkBetween(plan.from, placeAt(firstRide.points[0], firstRide.stops[0] ?? "탑승지"), key);
     if (w) {
       const g = buildGuide(w.steps);
-      if (g[0]) g[0].line1 = `🚶 ${firstRide.stops[0] ?? ""}까지 도보`;
+      if (g[0]) g[0].line1 = `[도보] ${firstRide.stops[0] ?? ""}까지 도보`;
       guide.push(...g);
     }
   }
@@ -132,7 +132,7 @@ export async function buildTransitGuide(plan: TransitPlan, option: TransitRoute,
       const g = buildGuide(w.steps);
       if (g[0]) {
         g[0].turn = "walk";
-        g[0].line1 = `🚶 ${lastRide?.stops[lastRide.stops.length - 1] ?? ""}에서 도보`;
+        g[0].line1 = `[도보] ${lastRide?.stops[lastRide.stops.length - 1] ?? ""}에서 도보`;
       }
       guide.push(...g);
     }

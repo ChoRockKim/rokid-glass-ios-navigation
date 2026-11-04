@@ -104,9 +104,9 @@ export function classifyTurn(angle: number | null): Turn {
 
 export const TURN_LABEL: Record<Turn, { arrow: string; word: string }> = {
   start: { arrow: "●", word: "출발" },
-  walk: { arrow: "🚶", word: "도보" },
-  bus: { arrow: "🚌", word: "버스" },
-  subway: { arrow: "🚇", word: "지하철" },
+  walk: { arrow: "[도보]", word: "도보" },
+  bus: { arrow: "[버스]", word: "버스" },
+  subway: { arrow: "[지하철]", word: "지하철" },
   straight: { arrow: "↑", word: "직진" },
   "slight-left": { arrow: "↖", word: "왼쪽 방향" },
   "slight-right": { arrow: "↗", word: "오른쪽 방향" },

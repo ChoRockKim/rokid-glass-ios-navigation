@@ -133,7 +133,7 @@ function rideView(a: ActiveRoute, step: GuideStep, now: number) {
   const stopsTotal = Math.max(1, r.stops.length - 1);
   // 정류장 좌표가 없어 거리 비율로 추정한다
   const stopsLeft = boarded ? Math.max(1, Math.ceil((stopsTotal * remaining) / len)) : stopsTotal;
-  const icon = r.kind === "bus" ? "🚌" : "🚇";
+  const icon = r.kind === "bus" ? "[버스]" : "[지하철]";
   const name = r.lines.slice(0, 3).join("/");
   const fresh = r.live && r.liveAt !== null && now - r.liveAt < LIVE_MAX_AGE_MS;
   const arrivals = fresh ? [...r.live!].sort((x, y) => (x.etaSec ?? 1e9) - (y.etaSec ?? 1e9)) : [];
@@ -157,7 +157,7 @@ export function messageFor(active: ActiveRoute | null, now = Date.now()): GlassM
   if (!step) return { type: "arrived", destination: to.name, text: `도착: ${to.name}` };
   const remaining = remainingOf(active);
   const rv = step.ride ? rideView(active, step, now) : null;
-  const line1 = active.offRoute ? "⚠ 경로를 벗어났습니다" : (rv?.line1 ?? step.line1);
+  const line1 = active.offRoute ? "[이탈] 경로를 벗어났습니다" : (rv?.line1 ?? step.line1);
   const line2 = rv?.line2 ?? (remaining === null ? step.line2 : line2For(step, remaining));
   return {
     type: "step",

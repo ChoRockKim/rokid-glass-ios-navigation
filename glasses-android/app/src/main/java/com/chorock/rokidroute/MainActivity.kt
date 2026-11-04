@@ -65,40 +65,11 @@ class MainActivity : Activity() {
 
     private fun onServerMessage(m: JSONObject) {
         val s = hud.state
-        hud.state = when (m.optString("type")) {
-            "step" -> s.copy(
-                line1 = m.optString("line1", m.optString("text")),
-                line2 = m.optString("line2"),
-                progress = "${m.optInt("index") + 1}/${m.optInt("total")}",
-                destination = m.optString("destination").let { if (it.isEmpty()) "" else "→ $it" },
-                warn = m.optBoolean("offRoute"),
-                idle = false,
-            )
-            "arrived" -> s.copy(line1 = "도착", line2 = m.optString("destination"), progress = "", destination = "", warn = false, idle = false)
-            "idle" -> s.copy(line1 = m.optString("text", "경로 없음"), line2 = "폰에서 길안내를 시작하세요", progress = "", destination = "", warn = false, idle = true, route = null, pos = null)
-            "map-route" -> {
-                val segs = m.getJSONArray("segments")
-                s.copy(route = MapRoute(
-                    segments = List(segs.length()) { i -> segs.getJSONObject(i).let { Segment(it.getString("kind"), ServerClient.points(it.getJSONArray("points"))) } },
-                    turns = ServerClient.points(m.getJSONArray("turns")),
-                ))
-            }
-            "map-pos" -> {
-                val p = MapPos(
-                    lon = m.getDouble("lon"), lat = m.getDouble("lat"), heading = m.getDouble("heading").toFloat(),
-                    snapped = m.optBoolean("snapped"), next = if (m.isNull("next")) null else m.optInt("next"),
-                )
-                // 경로 위를 걷는 중이면 상대 방향 센서의 0°를 경로 방향에 맞춘다
-                if (p.snapped && !s.idle) heading.calibrate(p.heading)
-                s.copy(pos = p)
-            }
-            "map-roads" -> {
-                val lines = m.getJSONArray("lines")
-                val major = m.getJSONArray("major")
-                s.copy(roads = MapRoads(List(lines.length()) { i -> ServerClient.points(lines.getJSONArray(i)) }, List(major.length()) { major.getBoolean(it) }))
-            }
-            else -> s
-        }
+        val next = s.apply(m)
+        // 경로 위를 걷는 중이면 상대 방향 센서의 0°를 경로 방향에 맞춘다
+        val p = next.pos
+        if (m.optString("type") == "map-pos" && p != null && p.snapped && !next.idle) heading.calibrate(p.heading)
+        hud.state = next
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {

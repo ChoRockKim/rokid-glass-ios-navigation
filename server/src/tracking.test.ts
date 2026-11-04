@@ -63,7 +63,7 @@ test("Navigator: 위치로 단계 자동 진행, 남은 거리, 이탈", () => {
   assert.equal(r.offRouteCount, 1);
   const m3 = nav.snapshot();
   assert.equal(m3.type === "step" && m3.offRoute, true);
-  assert.equal(m3.type === "step" && m3.line1, "⚠ 경로를 벗어났습니다");
+  assert.equal(m3.type === "step" && m3.line1, "[이탈] 경로를 벗어났습니다");
 
   // 복귀 후 도착
   nav.updatePositions([{ lon: 126.99805, lat: 37.502, acc: 5, ts: 5 }]);

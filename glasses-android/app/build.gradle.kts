@@ -1,6 +1,8 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    // 화면 렌더링 테스트 (layoutlib, 에뮬레이터 없이 실제 안드로이드 그리기 코드로 PNG)
+    id("app.cash.paparazzi")
 }
 
 // 서버 주소는 공개 정보라 기본값을 둔다. 토큰은 APK 에 넣지 않는다 (페어링으로 받음).
@@ -14,8 +16,8 @@ android {
         applicationId = "com.chorock.rokidroute"
         minSdk = 28
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
         buildConfigField("String", "SERVER_BASE", "\"$serverBase\"")
     }
 
@@ -30,4 +32,6 @@ android {
 
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

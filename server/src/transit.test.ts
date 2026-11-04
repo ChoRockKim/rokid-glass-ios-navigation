@@ -23,7 +23,7 @@ test("parseTransit + summarizeOption", () => {
 test("rideStep 문구", () => {
   const bus = rideStep(parseTransit(raw).routes[0]!.legs[2]!);
   assert.equal(bus.turn, "bus");
-  assert.equal(bus.line1, "🚌 421 탑승 · 제기역약령시장");
+  assert.equal(bus.line1, "[버스] 421 탑승 · 제기역약령시장");
   assert.equal(bus.line2, "성동구청 하차 · 4정거장");
 });
 
@@ -71,7 +71,7 @@ test("Navigator: 버스 구간 대기 → 실시간 표시 → 탑승 중", () =
     { line: "421", etaSec: 130, message: "2분10초후" },
   ]);
   let m = nav.snapshot();
-  assert.equal(m.type === "step" && m.line1, "🚌 421 3분 · 7분 후");
+  assert.equal(m.type === "step" && m.line1, "[버스] 421 3분 · 7분 후");
   assert.equal(m.type === "step" && m.ride?.boarded, false);
 
   // 정류장에서 300m 진행 → 탑승 중
@@ -79,7 +79,7 @@ test("Navigator: 버스 구간 대기 → 실시간 표시 → 탑승 중", () =
   nav.updatePositions([{ lon: pts[10]![0], lat: pts[10]![1], acc: 5, ts: 1 }]);
   m = nav.snapshot();
   assert.equal(m.type === "step" && m.ride?.boarded, true);
-  assert.equal(m.type === "step" && m.line1, "🚌 421 탑승 중");
+  assert.equal(m.type === "step" && m.line1, "[버스] 421 탑승 중");
   assert.ok(m.type === "step" && /^성동구청 하차 · 약 \d정거장$/.test(m.line2), m.type === "step" ? m.line2 : "");
   assert.equal(nav.upcomingRide(), null); // 탄 뒤에는 (다음 환승이 없으면) 폴링 안 함
 

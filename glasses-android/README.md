@@ -45,3 +45,8 @@ echo "sdk.dir=/path/to/android-sdk" > local.properties   # platforms;android-34,
 ## 확인 상태
 - 빌드, APK 패키지 정보·서명: 확인
 - 안경 실기 (화면 크기·위치, 키 코드, 센서 모드, 네트워크): **미확인**
+
+## 화면 미리보기 (에뮬레이터 없이)
+`./gradlew recordPaparazziDebug` → `app/src/test/snapshots/images/*.png`. Paparazzi(layoutlib, Android Studio 미리보기 엔진)로 `HudView` 를 480×282 dp 에 그린다.
+입력은 서버 코드를 돌려 안경(map=1)이 받은 메시지를 저장한 `app/src/test/resources/flow.json` (실제 카카오 대중교통 경로, 실시간 도착은 가짜 값, 주변 도로는 가짜 바둑판).
+클라우드 세션에 KVM 이 없어 에뮬레이터는 못 돌렸다.
