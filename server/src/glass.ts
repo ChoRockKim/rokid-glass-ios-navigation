@@ -25,7 +25,8 @@ export function startGlassServer(opts: {
       res.end(JSON.stringify({ ok: true, clients: wss.clients.size, active: Boolean(nav.current) }));
       return;
     }
-    if (req.method === "GET" && (req.url === "/viewer" || req.url === "/viewer/")) {
+    const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+    if (req.method === "GET" && (pathname === "/viewer" || pathname === "/viewer/")) {
       // 안경 화면 미리보기 (토큰은 페이지에서 입력, 브라우저에만 저장)
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
       res.end(VIEWER_HTML);

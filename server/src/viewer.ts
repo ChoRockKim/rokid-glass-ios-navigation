@@ -1,90 +1,72 @@
-// 브라우저용 안경 화면 미리보기. GET /viewer (화면 480x282 dp)
-// 안경 앱과 같은 WebSocket(/glass)에 붙어 같은 메시지를 480x282 화면으로 보여 준다.
-// 토큰은 페이지에서 입력받아 그 브라우저 localStorage 에만 저장한다 (서버 코드·저장소에 없음).
+// 브라우저용 안경 화면. GET /viewer
+// 페이지(앱) 전체가 480x282 dp 안경 화면이다. 바깥 UI 없음. 배경색은 칠하지 않는다(투명).
+// 안경 앱과 같은 WebSocket(/glass)에 붙어 같은 메시지를 보여 준다.
+//
+// 조작: 화면 탭/클릭·Enter·↓ = 다음, ↑ = 이전
+// 토큰: /viewer?token=… 로 한 번 열면 그 브라우저 localStorage 에 저장하고 주소창에서 지운다.
+//       토큰이 없으면 화면 안에 입력 칸을 보여 준다. (서버 코드·저장소에는 토큰 없음)
+// 위치: /viewer?geo=1 이면 브라우저 위치를 2초 간격까지 서버로 보낸다.
 export const VIEWER_HTML = `<!doctype html>
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>안경 화면 미리보기</title>
+<meta name="viewport" content="width=480, height=282, initial-scale=1, user-scalable=no">
+<title>안경 화면</title>
 <style>
-  :root { --g: #00ff66; --dim: #4da86c; --bg: #0b0f0c; }
+  :root { --g: #00ff66; --dim: #4da86c; }
   * { box-sizing: border-box; }
-  html, body { margin: 0; background: var(--bg); color: var(--g); font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
-  /* 조작부는 위, 안경 화면은 맨 아래에 붙인다 (위 여백 최대, 아래 여백 0) */
-  main { max-width: 520px; margin: 0 auto; padding: 16px 16px 0; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
-  .spacer { flex: 1; }
-  /* 안경 화면: 480x282 dp */
-  .stage-wrap { position: relative; width: 100%; overflow: hidden; border-radius: 14px 14px 0 0; box-shadow: 0 0 0 1px #133; margin-bottom: 0; }
-  .stage { position: absolute; left: 0; top: 0; width: 480px; height: 282px; transform-origin: top left; background: #000; }
-  .glass { position: absolute; left: 0; top: 0; width: 480px; height: 282px; padding: 14px 18px; overflow: hidden; }
+  html, body { margin: 0; padding: 0; width: 480px; height: 282px; overflow: hidden; background: transparent; color: var(--g);
+    font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; -webkit-user-select: none; user-select: none; }
+  #app { position: relative; width: 480px; height: 282px; padding: 14px 18px; overflow: hidden; cursor: pointer; background: transparent; }
   .top, .bottom { display: flex; justify-content: space-between; font-size: 16px; height: 22px; color: var(--dim); }
   .bottom { position: absolute; left: 18px; right: 18px; bottom: 10px; font-size: 14px; height: 18px; }
   .line1 { margin-top: 18px; font-size: 30px; line-height: 38px; max-height: 76px; overflow: hidden; font-weight: 700; word-break: keep-all; }
   .line2 { margin-top: 10px; font-size: 22px; line-height: 30px; max-height: 60px; overflow: hidden; word-break: keep-all; }
   .warn .line1 { color: #fff; }
   .idle .line1, .idle .line2 { color: var(--dim); }
-  .controls { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; margin-top: 4px; }
-  button { font: inherit; font-size: 17px; padding: 14px; border-radius: 12px; border: 1px solid #1f5; background: #062; color: #dfe; }
-  button.secondary { background: transparent; color: var(--g); }
-  .row { display: flex; gap: 8px; align-items: center; margin-top: 14px; font-size: 14px; color: var(--dim); flex-wrap: wrap; }
-  input[type=password] { flex: 1; min-width: 0; font: inherit; padding: 10px; border-radius: 10px; border: 1px solid #1f5; background: #000; color: var(--g); }
-  label { display: flex; gap: 6px; align-items: center; }
-  small { color: var(--dim); }
+  #tokenForm { position: absolute; left: 18px; right: 18px; bottom: 36px; display: none; gap: 8px; }
+  #tokenForm input, #tokenForm button { font: inherit; font-size: 16px; padding: 8px; border-radius: 8px; border: 1px solid var(--g); background: transparent; color: var(--g); }
+  #tokenForm input { flex: 1; min-width: 0; }
 </style>
 </head>
 <body>
-<main>
-  <div class="controls">
-    <button id="prev" class="secondary">▲ 이전</button>
-    <button id="next">탭 · 다음 ▼</button>
-  </div>
-
-  <div class="row">
-    <input id="token" type="password" placeholder="GLASS_TOKEN" autocomplete="off">
-    <button id="save" class="secondary">연결</button>
-  </div>
-  <div class="row">
-    <label><input id="geo" type="checkbox"> 이 브라우저 위치 보내기</label>
-    <small id="geoStatus"></small>
-  </div>
-  <div class="row"><small>키보드: Enter/↓ 다음, ↑ 이전. 토큰은 이 브라우저에만 저장됩니다.</small></div>
-  <div class="spacer"></div>
-  <div id="wrap" class="stage-wrap">
-    <div id="stage" class="stage">
-      <div id="glass" class="glass idle">
-        <div class="top"><span id="progress"></span><span id="dest"></span></div>
-        <div id="line1" class="line1">연결 전</div>
-        <div id="line2" class="line2">아래에 GLASS_TOKEN 을 넣으세요</div>
-        <div class="bottom"><span id="status"></span><span>탭 다음 · ▲ 이전</span></div>
-      </div>
-    </div>
-  </div>
-
-</main>
+<div id="app" class="idle">
+  <div class="top"><span id="progress"></span><span id="dest"></span></div>
+  <div id="line1" class="line1">연결 전</div>
+  <div id="line2" class="line2"></div>
+  <form id="tokenForm"><input id="token" type="password" placeholder="GLASS_TOKEN" autocomplete="off"><button>연결</button></form>
+  <div class="bottom"><span id="status"></span><span id="geoStatus"></span></div>
+</div>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  // 480x282 dp 화면을 그대로 그리고 폭에 맞춰 통째로 축소/확대 (줄바꿈이 안경과 같게)
-  const fit = () => { const w = $('wrap').clientWidth; const k = w / 480; $('stage').style.transform = 'scale(' + k + ')'; $('wrap').style.height = (282 * k) + 'px'; };
-  window.addEventListener('resize', fit); fit();
   const KEY = 'glassToken';
-  let ws = null, wait = 2000, timer = null, watchId = null, lastSent = 0;
+  const store = {
+    get: () => { try { return localStorage.getItem(KEY) || ''; } catch (e) { return ''; } },
+    set: (v) => { try { localStorage.setItem(KEY, v); } catch (e) {} },
+  };
+  let ws = null, wait = 2000, timer = null, lastSent = 0;
+
+  // ?token= 은 저장하고 주소창에서 지운다
+  const params = new URLSearchParams(location.search);
+  if (params.get('token')) { store.set(params.get('token')); params.delete('token'); }
+  const geoOn = params.get('geo') === '1';
+  history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params : ''));
 
   const show = (m) => {
-    const g = $('glass');
+    const app = $('app');
     if (m.type === 'step') {
-      g.className = 'glass ' + (m.offRoute ? 'warn' : 'step');
+      app.className = m.offRoute ? 'warn' : 'step';
       $('line1').textContent = m.line1 || m.text || '';
       $('line2').textContent = m.line2 || '';
       $('progress').textContent = (m.index + 1) + '/' + m.total;
       $('dest').textContent = m.destination ? '→ ' + m.destination : '';
     } else if (m.type === 'arrived') {
-      g.className = 'glass step';
+      app.className = 'step';
       $('line1').textContent = '도착'; $('line2').textContent = m.destination || '';
       $('progress').textContent = ''; $('dest').textContent = '';
     } else {
-      g.className = 'glass idle';
+      app.className = 'idle';
       $('line1').textContent = m.text || '경로 없음'; $('line2').textContent = '폰에서 길안내를 시작하세요';
       $('progress').textContent = ''; $('dest').textContent = '';
     }
@@ -94,13 +76,13 @@ export const VIEWER_HTML = `<!doctype html>
 
   function connect() {
     clearTimeout(timer);
-    const token = localStorage.getItem(KEY) || '';
-    if (!token) { status('토큰 없음'); return; }
+    const token = store.get();
+    if (!token) { $('tokenForm').style.display = 'flex'; status('토큰 없음'); return; }
+    $('tokenForm').style.display = 'none';
     if (ws) { try { ws.onclose = null; ws.close(); } catch (e) {} }
-    const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/glass?token=' + encodeURIComponent(token);
-    ws = new WebSocket(url);
+    ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/glass?token=' + encodeURIComponent(token));
     status('연결 중…');
-    ws.onopen = () => { wait = 2000; status('연결됨'); send({ type: 'sync' }); };
+    ws.onopen = () => { wait = 2000; status(''); send({ type: 'sync' }); };
     ws.onmessage = (e) => { try { show(JSON.parse(e.data)); } catch (err) {} };
     ws.onclose = () => {
       status('끊김 · ' + Math.round(wait / 1000) + '초 뒤 재연결');
@@ -108,29 +90,23 @@ export const VIEWER_HTML = `<!doctype html>
     };
   }
 
-  $('next').onclick = () => send({ type: 'next' });
-  $('prev').onclick = () => send({ type: 'prev' });
+  $('tokenForm').onsubmit = (e) => { e.preventDefault(); const v = $('token').value.trim(); if (v) store.set(v); $('token').value = ''; connect(); };
+  $('app').addEventListener('click', (e) => { if (!e.target.closest('#tokenForm')) send({ type: 'next' }); });
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT') return;
     if (e.key === 'Enter' || e.key === 'ArrowDown') { e.preventDefault(); send({ type: 'next' }); }
     if (e.key === 'ArrowUp') { e.preventDefault(); send({ type: 'prev' }); }
   });
-  $('save').onclick = () => {
-    const v = $('token').value.trim();
-    if (v) { localStorage.setItem(KEY, v); $('token').value = ''; }
-    connect();
-  };
-  $('geo').onchange = (e) => {
-    if (!e.target.checked) { if (watchId !== null) navigator.geolocation.clearWatch(watchId); watchId = null; $('geoStatus').textContent = ''; return; }
-    if (!navigator.geolocation) { $('geoStatus').textContent = '이 브라우저는 위치 미지원'; return; }
-    watchId = navigator.geolocation.watchPosition((p) => {
+
+  if (geoOn && navigator.geolocation) {
+    navigator.geolocation.watchPosition((p) => {
       const now = Date.now();
       if (now - lastSent < 2000) return;
       lastSent = now;
       send({ type: 'position', lat: p.coords.latitude, lon: p.coords.longitude, acc: p.coords.accuracy, ts: p.timestamp || now });
-      $('geoStatus').textContent = '±' + Math.round(p.coords.accuracy) + 'm 보냄 ' + new Date().toLocaleTimeString();
-    }, (err) => { $('geoStatus').textContent = '위치 실패: ' + err.message; }, { enableHighAccuracy: true, maximumAge: 0 });
-  };
+      $('geoStatus').textContent = '위치 ±' + Math.round(p.coords.accuracy) + 'm';
+    }, () => { $('geoStatus').textContent = '위치 실패'; }, { enableHighAccuracy: true, maximumAge: 0 });
+  }
   connect();
 })();
 </script>
