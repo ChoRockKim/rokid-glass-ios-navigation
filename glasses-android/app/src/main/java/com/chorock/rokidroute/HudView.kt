@@ -354,7 +354,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     /**
      * 대중교통 후보 (네이버 지도 앱처럼): 카드마다
      *   [12분]  환승 0 · 1,550원 · 도보 6분                  회기 승차
-     *   [▬▬ 경의중앙선 ▬▬]·····[▬ 273 ▬]   ← 구간 시간 비율 막대. 버스 = 채운 막대, 지하철 = 테두리 막대, 도보 = 점선
+     *   [▬ 경의중앙선 (8분) ▬]·····[▬ 273번 (5분) ▬]   ← 구간 시간 비율 막대. 버스 = 채운 막대, 지하철 = 테두리 막대, 도보 = 점선
      * 한 화면에 3장, 선택한 카드는 테두리. 글자가 칸보다 길면 자른다 (화면 밖으로 안 넘침)
      */
     private fun drawRouteCards(canvas: Canvas, m: Menu, cards: List<RouteCard>) {
@@ -403,7 +403,9 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
                 }
                 if (leg.kind != "walk" && w > 18f) {
                     val p = if (leg.kind == "bus") busLabel else subwayLabel.apply { color = if (sel) green else dim }
-                    val label = TextUtils.ellipsize("${leg.label} ${leg.minutes}분", p, w - 8f, TextUtils.TruncateAt.END)
+                    // "120번 (5분)". 칸이 좁으면 시간부터 빼고, 그래도 넘치면 노선 이름을 자른다
+                    val full = "${leg.label} (${leg.minutes}분)"
+                    val label = if (p.measureText(full) <= w - 8f) full else TextUtils.ellipsize(leg.label, p, w - 8f, TextUtils.TruncateAt.END)
                     val tw = p.measureText(label, 0, label.length)
                     canvas.drawText(label, 0, label.length, bx + (w - tw) / 2, barTop + barH - 4f, p)
                 }

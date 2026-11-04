@@ -57,7 +57,8 @@ export function routeCard(r: TransitRoute): RouteCard {
     legs: r.legs.map((l) => ({
       kind: l.kind === "WALKING" ? "walk" : l.kind === "BUS" ? "bus" : "subway",
       minutes: min(l.time),
-      label: l.kind === "WALKING" ? "" : l.kind === "BUS" ? `${l.lines[0] ?? "버스"}${l.lines.length > 1 ? ` 외 ${l.lines.length - 1}` : ""}` : (l.lines[0] ?? "지하철"),
+      // 버스는 "120번" 처럼 번호에 "번"을 붙인다 (막대 안에서 시간과 헷갈리지 않게)
+      label: l.kind === "WALKING" ? "" : l.kind === "BUS" ? `${l.lines[0] ? `${l.lines[0]}번` : "버스"}${l.lines.length > 1 ? ` 외 ${l.lines.length - 1}` : ""}` : (l.lines[0] ?? "지하철"),
       board: l.kind === "WALKING" ? "" : (l.stops[0] ?? ""),
     })),
   };
