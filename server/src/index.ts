@@ -11,6 +11,7 @@ import { Ota } from "./ota.js";
 import { Chooser } from "./chooser.js";
 import { Favorites } from "./favorites.js";
 import { nearbyBoards } from "./nearby.js";
+import { Recent } from "./recent.js";
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -36,6 +37,7 @@ const log = (m: string) => console.log(`[${new Date().toISOString()}] ${m}`);
 const nav = new Navigator();
 const chooser = new Chooser();
 const favorites = new Favorites(process.env.FAVORITES_FILE ?? "/data/favorites.json");
+const recents = new Recent(process.env.RECENT_FILE ?? "/data/recent.json");
 
 // 진행 중인 경로를 볼륨에 저장해 두고 재시작하면 이어서 안내한다 (배포·재시작 때 안내가 사라지던 문제)
 const STATE_FILE = process.env.STATE_FILE ?? "/data/nav.json";
@@ -68,7 +70,7 @@ nav.onChange((m) => log(`nav -> ${m.type}${m.type === "step" ? ` ${m.index + 1}/
 let slack: Awaited<ReturnType<typeof startSlack>> | null = null;
 
 const api = API_TOKEN
-  ? createApi({ nav, apiToken: API_TOKEN, kakaoKey: KAKAO_REST_KEY, log, notify: (t) => slack?.notify(t), pairing: new Pairing(GLASS_TOKEN), chooser, favorites })
+  ? createApi({ nav, apiToken: API_TOKEN, kakaoKey: KAKAO_REST_KEY, log, notify: (t) => slack?.notify(t), pairing: new Pairing(GLASS_TOKEN), chooser, favorites, recents })
   : undefined;
 if (!api) log("API_TOKEN 이 없어 폰용 HTTP API(/location, /route, /nav, /status)를 끕니다");
 

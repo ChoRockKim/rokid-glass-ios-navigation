@@ -15,6 +15,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { KakaoError, addressAt, searchAddress, searchPlaces, type Place, type PlaceCandidate } from "./kakao.js";
 import { DEFAULT_CATEGORY, type Favorites } from "./favorites.js";
+import type { Recent } from "./recent.js";
 import { messageFor, formatMinutes, type Navigator, type Position } from "./navigation.js";
 import { formatDistance } from "./guide.js";
 import { planRoute, resolvePlace, type PlaceInput } from "./planner.js";
@@ -46,6 +47,8 @@ export interface ApiDeps {
   chooser?: Chooser;
   /** 즐겨찾기 (없으면 /favorites 끔) */
   favorites?: Favorites;
+  /** 최근 목적지 (길안내를 시작할 때마다 기록) */
+  recents?: Recent;
 }
 
 class HttpError extends Error {
@@ -112,7 +115,7 @@ export function parsePositions(body: unknown): Position[] | null {
 }
 
 export function createApi(deps: ApiDeps) {
-  const { nav, apiToken, kakaoKey, log, notify, pairing, chooser, favorites } = deps;
+  const { nav, apiToken, kakaoKey, log, notify, pairing, chooser, favorites, recents } = deps;
 
   const pt = (p: Place) => ({ lon: p.x, lat: p.y, name: p.name });
   const candLabel = (c: PlaceCandidate) => (c.distance === null ? c.name : `${c.name} · ${formatDistance(c.distance)}`);
@@ -136,6 +139,7 @@ export function createApi(deps: ApiDeps) {
   async function startWalk(f: Place, t: Place): Promise<string> {
     const planned = await planRoute(pt(f), pt(t), kakaoKey);
     nav.start({ ...planned, startedBy: "api" });
+    recents?.add(t);
     const a = nav.current!;
     log(`api route: ${planned.from.name} -> ${planned.to.name}, ${a.guide.length} steps`);
     notify?.(`:walking: *${planned.from.name} → ${planned.to.name}* · ${formatDistance(planned.route.totalDistance)} · 약 ${formatMinutes(planned.route.totalTime)} · ${a.guide.length}단계 (단축어에서 시작)`);
@@ -165,6 +169,7 @@ export function createApi(deps: ApiDeps) {
     const option = plan.options[i]!;
     const { guide, route: r } = await buildTransitGuide(plan, option, kakaoKey);
     nav.start({ from: plan.from, to: plan.to, route: r, guide, mode: "transit", startedBy: "api" });
+    recents?.add(plan.to);
     notify?.(`:bus: *${summarizeOption(option, i)}* (단축어에서 시작)`);
     return `${i + 1}번 경로로 안내합니다. ${guide[0]?.line1.replace(/^\S+\s/, "") ?? ""}`;
   }
@@ -194,18 +199,25 @@ export function createApi(deps: ApiDeps) {
         address: f.address,
         distance: p ? Math.round(distanceM([p.lon, p.lat], [f.x, f.y])) : null,
       })),
+      // 최근 목적지 (안경은 "최근" 카테고리로 맨 앞에). id 는 "r:" + 이름
+      recent: (recents?.list() ?? []).map((r) => ({
+        id: `r:${r.name}`,
+        name: r.name,
+        address: r.address,
+        distance: p ? Math.round(distanceM([p.lon, p.lat], [r.x, r.y])) : null,
+      })),
     };
   }
 
   /** 안경 메뉴에서 고른 즐겨찾기로 안내 시작 (출발 = 마지막으로 받은 위치). 결과 문장 */
   async function goFavorite(id: string, mode: "walk" | "transit"): Promise<string> {
-    const fav = favorites?.get(id);
-    if (!fav) return "즐겨찾기를 찾지 못함";
+    const fav = id.startsWith("r:") ? recents?.get(id.slice(2)) : favorites?.get(id);
+    if (!fav) return "목적지를 찾지 못함";
     const p = nav.lastKnownPosition;
     if (!p) return "현재 위치 없음 (Overland 확인)";
     const f: Place = { name: "현재 위치", address: "", x: p.lon, y: p.lat };
     const t: Place = { name: fav.name, address: fav.address, x: fav.x, y: fav.y };
-    log(`favorite: ${fav.name} (${mode})`);
+    log(`${id.startsWith("r:") ? "recent" : "favorite"}: ${fav.name} (${mode})`);
     if (mode === "walk") {
       await startWalk(f, t);
       return `${fav.name} 도보 안내 시작`;

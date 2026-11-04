@@ -138,3 +138,42 @@ test("실시간 실패: 정류장 근처면 이유를 보드로, 다시 받으�
   m = nav.snapshot();
   assert.ok(m.type === "step" && !m.stop?.error && !m.ride?.error && m.stop?.mine.length === 1);
 });
+
+test("하차 알림: 탑승 중 하차 지점이 가까워지면 다음 → 이번 정류장", () => {
+  let now = 0;
+  const nav = new Navigator(() => now);
+  const legs = parseTransit(raw).routes[0]!.legs;
+  const guide: GuideStep[] = [rideStep(legs[2]!)];
+  const place = { name: "성동구청", address: "", x: 0, y: 0 };
+  nav.start({ from: place, to: place, route: { totalDistance: 1, totalTime: 1, steps: [] }, guide, mode: "transit", startedBy: "t" });
+  const pts = legs[2]!.points;
+  const at = (i: number) => { nav.updatePositions([{ lon: pts[i]![0], lat: pts[i]![1], acc: 5, ts: ++now }]); return nav.snapshot(); };
+  // 출발 직후: 알림 없음
+  const m = at(10);
+  assert.ok(m.type === "step" && m.ride?.boarded && !m.ride.alightAlert);
+  // 끝까지 가며: 알림 없음 → 다음 정류장 → 이번 정류장 (한 번 뜨면 계속)
+  const seq: string[] = [];
+  const texts = new Set<string>();
+  for (let i = 11; i < pts.length; i++) {
+    const s = at(i);
+    if (s.type !== "step") break; // 하차 지점(12m 안)이면 도착
+    seq.push(s.ride?.alightAlert ?? "-");
+    texts.add(s.line1);
+  }
+  const order = seq.filter((x, i) => x !== seq[i - 1]);
+  assert.deepEqual(order, ["-", "soon", "now"], seq.join(","));
+  assert.ok(texts.has("[버스] 다음 정류장에서 하차") && texts.has("[버스] 이번 정류장에서 하차"));
+});
+
+test("최근 목적지: 같은 이름은 하나로, 최근 순, 현재 위치 제외, 최대 8", async () => {
+  const { Recent, RECENT_MAX } = await import("./recent.js");
+  const r = new Recent(null);
+  r.add({ name: "현재 위치", address: "", x: 0, y: 0 });
+  for (let i = 0; i < 10; i++) r.add({ name: `곳${i}`, address: "", x: i, y: 0 });
+  r.add({ name: "곳3", address: "새 주소", x: 3, y: 0 });
+  const names = r.list().map((p) => p.name);
+  assert.equal(names.length, RECENT_MAX);
+  assert.equal(names[0], "곳3");
+  assert.equal(r.get("곳3")!.address, "새 주소");
+  assert.ok(!names.includes("현재 위치"));
+});

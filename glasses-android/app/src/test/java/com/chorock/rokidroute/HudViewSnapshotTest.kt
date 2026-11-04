@@ -45,10 +45,7 @@ class HudViewSnapshotTest {
         v.clock = { T0 }
         v.device = HudView.Device(battery = 64, network = "Wi-Fi", server = true)
         v.update = "0.3.3"
-        v.menu = HudView.Menu(
-            listOf("길안내 화면으로", "안내 종료", "여기서 경로 다시 찾기", "방향 다시 맞추기", "지도: 자동", "업데이트 설치 (0.3.3)", "앱 종료"),
-            selected = 4, note = "회전까지 80m 넘게 남으면 흐리게",
-        )
+        v.menu = HudView.Menu(listOf("길안내 화면으로", "목적지 ▸", "버스·지하철 시간", "안내 ▸", "설정 ▸  ●", "앱 종료"), selected = 1)
         paparazzi.snapshot(v, "09_menu")
     }
 
@@ -163,6 +160,36 @@ class HudViewSnapshotTest {
         v.clock = { T0 }
         v.state = s.copy(stop = StopBoard("bus", "외대역앞", emptyList(), emptyList(), "실시간 정보 없음 (API 키 확인 필요)"), waiting = null, line1 = "[버스] 273 탑승 · 외대역앞")
         paparazzi.snapshot(v, "22_stop_board_error")
+    }
+
+    /** 메뉴 정리: 목적지(최근 + 즐겨찾기 카테고리), 설정 묶음 */
+    @Test
+    fun menuGroups() {
+        val v = HudView(paparazzi.context) { null }
+        v.clock = { T0 }
+        v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
+        v.menu = HudView.Menu(listOf("최근 (5)", "집 (1)", "회사 (2)", "맛집 (4)"), selected = 0, title = "목적지", hint = "쓸기 이동 · 탭 선택 · 뒤로 이전")
+        paparazzi.snapshot(v, "24_menu_destinations")
+        v.menu = HudView.Menu(listOf("왕십리역 경의중앙선 · 3.6km", "맥도날드 외대점 · 768m", "경희대학교 서울캠퍼스 · 351m", "회사 · 9.4km", "단골 국밥 · 320m"), selected = 0,
+            title = "목적지 · 최근", note = "서울 성동구 왕십리로 지하 300", hint = "쓸기 이동 · 탭 선택 · 뒤로 이전")
+        paparazzi.snapshot(v, "25_menu_recent")
+        v.menu = HudView.Menu(listOf("지도: 자동", "방향 다시 맞추기", "업데이트 설치 (0.3.20)"), selected = 2, title = "설정", hint = "쓸기 이동 · 탭 선택 · 뒤로 이전")
+        paparazzi.snapshot(v, "26_menu_settings")
+    }
+
+    /** 하차 알림: 버스 탑승 중 다음 정류장 → 테두리 깜빡임 (소리 없음), 간소 화면에서도 */
+    @Test
+    fun alightAlert() {
+        val f = fixture()
+        val base = stateUpto(f, f.getJSONArray("checkpoints").getJSONObject(5).getInt("upto"))
+        for ((name, kind, style) in listOf(Triple("soon", "soon", HudView.ViewStyle.FULL), Triple("now_compact", "now", HudView.ViewStyle.COMPACT))) {
+            val v = HudView(paparazzi.context) { null }
+            v.clock = { T0 + 150 }
+            v.viewStyle = style
+            v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
+            v.state = base.copy(alight = kind, alightSince = T0, line1 = if (kind == "now") "[버스] 이번 정류장에서 하차" else "[버스] 다음 정류장에서 하차", line2 = "회기시장 하차 · 약 1정거장")
+            paparazzi.snapshot(v, "27_alight_$name")
+        }
     }
 
     /** 폰에서 "맥도날드"로 시작 → 안경에서 지점 고르기 (서버 /route 를 실제 카카오로 돌려 받은 목록) */

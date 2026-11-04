@@ -66,6 +66,8 @@ export type GlassMessage =
         arrivals: Arrival[];
         /** 실시간을 못 받았을 때 이유 */
         error?: string;
+        /** 하차 알림: soon = 다음 정류장(역)에서, now = 이번에 내림. 안경은 테두리를 깜빡인다 */
+        alightAlert?: "soon" | "now";
       };
       /** 탈 정류장·역 근처(AT_STOP_M)에서 아직 안 탔으면 그곳의 실시간 도착. 안경 간소 화면이 오른쪽에 보여 준다 */
       stop?: StopBoard;
@@ -196,6 +198,11 @@ function boardOf(ride: RideInfo, now: number): StopBoard | null {
   };
 }
 
+/** 하차 지점까지 이 안이면 "다음 정류장에서 하차" (정류장 좌표가 없어 정거장 수 추정과 함께 쓴다) */
+export const ALIGHT_SOON_M = 600;
+/** 이 안이면 "이번 정류장에서 하차" */
+export const ALIGHT_NOW_M = 150;
+
 /** 탑승으로 볼 진행 거리 (정류장에서 이만큼 지나면 탄 것으로 본다) */
 const BOARDED_M = 80;
 /** 이보다 오래된 실시간 정보는 안 쓴다 */
@@ -233,7 +240,14 @@ function rideView(a: ActiveRoute, step: GuideStep, now: number) {
   const name = r.lines.slice(0, 3).join("/");
   const fresh = r.live && r.liveAt !== null && now - r.liveAt < LIVE_MAX_AGE_MS;
   const arrivals = fresh ? r.live!.filter((a) => a.mine !== false).sort((x, y) => (x.etaSec ?? 1e9) - (y.etaSec ?? 1e9)) : [];
-  const line1 = boarded
+  // 하차 알림 (화면만): 남은 정거장이 1이거나 하차 지점까지 ALIGHT_SOON_M 안 → 다음 정류장 하차, ALIGHT_NOW_M 안 → 이번 정류장 하차
+  const stopWord = r.kind === "bus" ? "정류장" : "역";
+  const alight: "soon" | "now" | null = !boarded ? null : remaining <= ALIGHT_NOW_M ? "now" : stopsLeft <= 1 || remaining <= ALIGHT_SOON_M ? "soon" : null;
+  const line1 = alight === "now"
+    ? `${icon} 이번 ${stopWord}에서 하차`
+    : alight === "soon"
+      ? `${icon} 다음 ${stopWord}에서 하차`
+      : boarded
     ? `${icon} ${name} 탑승 중`
     : arrivals.length
       ? `${icon} ${arrivalsText(arrivals.slice(0, 2))}`
@@ -244,6 +258,7 @@ function rideView(a: ActiveRoute, step: GuideStep, now: number) {
     line2,
     ride: {
       kind: r.kind, lines: r.lines, board: r.board, alight: r.alight, boarded, stopsLeft, arrivals,
+      ...(alight ? { alightAlert: alight } : {}),
       ...(!boarded && !arrivals.length && r.liveError ? { error: r.liveError.text } : {}),
     },
   };

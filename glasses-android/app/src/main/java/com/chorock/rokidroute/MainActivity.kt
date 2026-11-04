@@ -105,7 +105,8 @@ class MainActivity : Activity() {
         )
         updater = Updater(this, BuildConfig.SERVER_BASE, token = { prefs.getString("glassToken", null) ?: BuildConfig.DEVICE_TOKEN.takeIf { it.isNotEmpty() } }) { note ->
             hud.update = updater.available?.versionName
-            hud.menu = hud.menu?.let { it.copy(items = menuLabels(), note = note) }
+            // 메인 메뉴·설정 화면이면 "업데이트 설치 (…)"·"설정 ●" 를 바로 바꾸고 알림
+            if (sub == null || sub is Sub.Group) hud.menu = hud.menu?.let { it.copy(items = menuLabels(), note = note) }
         }
         // 켜 둔 채로 오래 쓰면 6시간마다 다시 확인
         val recheck = object : Runnable {
@@ -245,7 +246,9 @@ class MainActivity : Activity() {
             a.getJSONObject(i).let { Fav(it.getString("id"), it.getString("name"), it.optString("category", "기타"), it.optString("address"), if (it.isNull("distance")) null else it.optInt("distance")) }
         }
         val cats = m.optJSONArray("categories")?.let { c -> List(c.length()) { c.getString(it) } } ?: items.map { it.category }.distinct()
-        return FavData(cats, items)
+        val r = m.optJSONArray("recent") ?: org.json.JSONArray()
+        val recent = List(r.length()) { i -> r.getJSONObject(i).let { Fav(it.getString("id"), it.getString("name"), RECENT, it.optString("address"), if (it.isNull("distance")) null else it.optInt("distance")) } }
+        return FavData(cats, items, recent)
     }
 
     private fun parseBoards(m: JSONObject): List<HudView.Board> {
@@ -264,7 +267,12 @@ class MainActivity : Activity() {
 
     // ── 즐겨찾기: 메뉴 → 즐겨찾기 → 카테고리 → 장소 → 바로 안내 (가까우면 도보, 멀면 대중교통 후보를 안경에서 고름) ──
     data class Fav(val id: String, val name: String, val category: String, val address: String, val distance: Int?)
-    data class FavData(val categories: List<String>, val items: List<Fav>)
+    /** recent = 최근 목적지 (목적지 화면에서 "최근" 카테고리로 맨 앞) */
+    data class FavData(val categories: List<String>, val items: List<Fav>, val recent: List<Fav> = emptyList()) {
+        /** 화면에 보이는 카테고리 순서 (최근이 있으면 맨 앞) */
+        val keys: List<String> get() = (if (recent.isNotEmpty()) listOf(RECENT) else emptyList()) + categories
+        fun placesOf(key: String) = if (key == RECENT) recent else items.filter { it.category == key }
+    }
 
     private sealed class Sub {
         object Loading : Sub()
@@ -272,8 +280,10 @@ class MainActivity : Activity() {
         data class Nearby(val boards: List<HudView.Board>?, val note: String, val at: Long?) : Sub()
         data class Categories(val data: FavData) : Sub()
         data class Places(val data: FavData, val category: String, val parentSel: Int) : Sub() {
-            val items get() = data.items.filter { it.category == category }
+            val items get() = data.placesOf(category)
         }
+        /** 메뉴 묶음 (안내 ▸, 설정 ▸) */
+        data class Group(val kind: Item, val items: List<Item>) : Sub()
     }
 
     // 끊겨 있으면 이번 갱신은 건너뛰고(남은 시간은 안경이 줄여 보여 줌) 다음 20초에 다시
@@ -297,16 +307,17 @@ class MainActivity : Activity() {
         sub = s
         val hint = "쓸기 이동 · 탭 선택 · 뒤로 이전"
         hud.menu = when (s) {
-            Sub.Loading -> HudView.Menu(listOf("불러오는 중…"), title = "즐겨찾기", hint = hint)
+            Sub.Loading -> HudView.Menu(listOf("불러오는 중…"), title = "목적지", hint = hint)
+            is Sub.Group -> HudView.Menu(s.items.map(::label), selected, title = if (s.kind == Item.GUIDE) "안내" else "설정", hint = hint)
             is Sub.Nearby -> HudView.Menu(
                 emptyList(), title = "버스·지하철 시간" + (s.at?.let { " · ${HudView.clockText(it)} 기준" } ?: ""),
                 note = s.note, hint = "탭 새로고침 · 20초마다 갱신 · 뒤로 이전", boards = s.boards ?: emptyList(), boardsAt = s.at,
             )
             is Sub.Categories ->
-                if (s.data.items.isEmpty()) HudView.Menu(listOf("등록된 장소 없음"), title = "즐겨찾기", note = "폰 브라우저 /places 에서 추가", hint = hint)
-                else HudView.Menu(s.data.categories.map { c -> "$c (${s.data.items.count { it.category == c }})" }, selected, title = "즐겨찾기", hint = hint)
+                if (s.data.keys.isEmpty()) HudView.Menu(listOf("등록된 장소 없음"), title = "목적지", note = "폰 브라우저 /places 에서 즐겨찾기 추가", hint = hint)
+                else HudView.Menu(s.data.keys.map { c -> "$c (${s.data.placesOf(c).size})" }, selected, title = "목적지", hint = hint)
             is Sub.Places -> s.items.let { list ->
-                HudView.Menu(list.map { it.name + distText(it.distance) }, selected, title = "즐겨찾기 · ${s.category}", note = list.getOrNull(selected)?.address ?: "", hint = hint)
+                HudView.Menu(list.map { it.name + distText(it.distance) }, selected, title = "목적지 · ${s.category}", note = list.getOrNull(selected)?.address ?: "", hint = hint)
             }
         }
     }
@@ -314,7 +325,7 @@ class MainActivity : Activity() {
     private fun handleSub(s: Sub, input: Input, m: HudView.Menu) {
         if (s is Sub.Nearby) {
             when (input) {
-                Input.BACK -> { sub = null; hud.removeCallbacks(refreshNearby); hud.menu = HudView.Menu(menuLabels(), Item.NEARBY.ordinal) }
+                Input.BACK -> { hud.removeCallbacks(refreshNearby); openMain(Item.NEARBY) }
                 else -> request(JSONObject().put("type", "nearby"), "버스·지하철 시간")
             }
             return
@@ -323,13 +334,15 @@ class MainActivity : Activity() {
         when (input) {
             Input.NEXT, Input.PREV -> showSub(s, (m.selected + (if (input == Input.NEXT) 1 else -1) + n) % n)
             Input.BACK -> when (s) {
-                Sub.Loading, is Sub.Categories -> { sub = null; hud.menu = HudView.Menu(menuLabels(), Item.FAVORITES.ordinal) }
+                Sub.Loading, is Sub.Categories -> openMain(Item.DEST)
+                is Sub.Group -> openMain(s.kind)
                 is Sub.Nearby -> {}
                 is Sub.Places -> showSub(Sub.Categories(s.data), s.parentSel)
             }
             Input.SELECT -> when (s) {
                 Sub.Loading, is Sub.Nearby -> {}
-                is Sub.Categories -> s.data.categories.getOrNull(m.selected)?.let { showSub(Sub.Places(s.data, it, m.selected), 0) }
+                is Sub.Group -> s.items.getOrNull(m.selected)?.let { select(it, m) }
+                is Sub.Categories -> s.data.keys.getOrNull(m.selected)?.let { showSub(Sub.Places(s.data, it, m.selected), 0) }
                 // 서버가 기존 길찾기와 같은 규칙으로: 직선 800m 안이면 도보, 아니면 대중교통 후보(안경에서 고름), 대중교통이 없으면 도보
                 is Sub.Places -> s.items.getOrNull(m.selected)?.let { fav ->
                     sub = null
@@ -343,6 +356,11 @@ class MainActivity : Activity() {
 
     /** 지금 띄운 선택지 번호 (서버 choose id). null 이면 일반 메뉴 */
     private var choosing: Int? = null
+
+    companion object {
+        /** 목적지 화면의 "최근" 카테고리 이름 */
+        const val RECENT = "최근"
+    }
 
     /** 끊겨 있으면 모아 두었다가 연결되면 보낸다 (30초 지나면 버림). 바로 못 보냈으면 알림 */
     private fun request(json: JSONObject, label: String) {
@@ -373,12 +391,34 @@ class MainActivity : Activity() {
     /** 안경 터치·R08 링 등 모든 입력을 이 네 동작으로 바꿔서 처리한다 */
     enum class Input { NEXT, PREV, SELECT, BACK }
 
-    /** 메뉴 항목 (순서 = 화면 순서) */
-    private enum class Item { BACK_TO_NAV, FAVORITES, NEARBY, STOP, REROUTE, RECALIBRATE, MAP_MODE, UPDATE, EXIT }
+    /**
+     * 메뉴 항목. 메인 메뉴는 안내 중일 때만 "안내 ▸" 가 보이고, 드물게 쓰는 것은 "설정 ▸" 아래로
+     *   메인: 길안내 화면으로 / 목적지 ▸ / 버스·지하철 시간 / 안내 ▸ / 설정 ▸ / 앱 종료
+     *   안내 ▸: 경로 다시 찾기 / 안내 종료      설정 ▸: 지도 표시 / 방향 다시 맞추기 / 업데이트
+     *   목적지 ▸: 최근 (n) / 즐겨찾기 카테고리들 → 장소 → 바로 안내
+     */
+    enum class Item { BACK_TO_NAV, DEST, NEARBY, GUIDE, SETTINGS, STOP, REROUTE, RECALIBRATE, MAP_MODE, UPDATE, EXIT }
+
+    private val navigating get() = !hud.state.idle && hud.state.progress.isNotEmpty()
+
+    private fun mainItems() = listOfNotNull(Item.BACK_TO_NAV, Item.DEST, Item.NEARBY, Item.GUIDE.takeIf { navigating }, Item.SETTINGS, Item.EXIT)
+
+    /** 메인 메뉴가 열릴 때의 항목 (안내 중인지에 따라 다름) */
+    private var mainList: List<Item> = emptyList()
+
+    /** 메인 메뉴 열기. focus 가 있으면 그 항목에 커서 (하위 화면에서 돌아올 때) */
+    private fun openMain(focus: Item? = null) {
+        sub = null
+        stopArmed = false
+        mainList = mainItems()
+        hud.menu = HudView.Menu(mainList.map(::label), focus?.let { mainList.indexOf(it).coerceAtLeast(0) } ?: 0)
+    }
 
     private fun label(item: Item): String = when (item) {
-        Item.BACK_TO_NAV -> "길안내 화면으로"
-        Item.FAVORITES -> "즐겨찾기"
+        Item.BACK_TO_NAV -> if (navigating) "길안내 화면으로" else "화면 닫기"
+        Item.DEST -> "목적지 ▸"
+        Item.GUIDE -> "안내 ▸"
+        Item.SETTINGS -> "설정 ▸" + if (updater.available != null) "  ●" else ""
         Item.NEARBY -> "버스·지하철 시간"
         Item.STOP -> "안내 종료"
         Item.REROUTE -> "여기서 경로 다시 찾기"
@@ -388,7 +428,12 @@ class MainActivity : Activity() {
         Item.EXIT -> "앱 종료"
     }
 
-    private fun menuLabels() = Item.values().map(::label)
+    /** 지금 화면(메인 또는 묶음)의 항목 이름. 다른 화면이면 그대로 */
+    private fun menuLabels(): List<String> = when (val s = sub) {
+        null -> mainList.map(::label)
+        is Sub.Group -> s.items.map(::label)
+        else -> hud.menu?.items ?: emptyList()
+    }
 
     /** 안내 종료는 실수로 누르지 않게 두 번 선택해야 한다 */
     private var stopArmed = false
@@ -425,7 +470,7 @@ class MainActivity : Activity() {
                         else showNotice("연결 끊김 · 단계 정보 없음")
                     }
                 }
-                Input.BACK -> { stopArmed = false; hud.menu = HudView.Menu(menuLabels()) }
+                Input.BACK -> openMain()
             }
             return
         }
@@ -435,15 +480,16 @@ class MainActivity : Activity() {
             Input.PREV -> { stopArmed = false; hud.menu = m.copy(selected = (m.selected - 1 + n) % n, note = "") }
             // 메인 화면(메뉴)에서 뒤로 = 앱 종료 (길안내 화면 → 뒤로 → 메뉴 → 뒤로 → 종료)
             Input.BACK -> finishAndRemoveTask()
-            Input.SELECT -> select(Item.values()[m.selected], m)
+            Input.SELECT -> mainList.getOrNull(m.selected)?.let { select(it, m) }
         }
     }
 
     private fun select(item: Item, m: HudView.Menu) {
-        val navigating = !hud.state.idle && hud.state.progress.isNotEmpty()
         when (item) {
-            Item.BACK_TO_NAV -> hud.menu = null
-            Item.FAVORITES -> {
+            Item.BACK_TO_NAV -> { sub = null; hud.menu = null }
+            Item.GUIDE -> showSub(Sub.Group(Item.GUIDE, listOf(Item.REROUTE, Item.STOP)), 0)
+            Item.SETTINGS -> showSub(Sub.Group(Item.SETTINGS, listOf(Item.MAP_MODE, Item.RECALIBRATE, Item.UPDATE)), 0)
+            Item.DEST -> {
                 // 저장해 둔 목록이 있으면 바로 보여 주고, 새 목록을 받으면 바꾼다
                 val saved = cache.favorites()
                 if (saved != null) showSub(Sub.Categories(parseFavorites(saved.json)), 0) else showSub(Sub.Loading, 0)
@@ -462,6 +508,7 @@ class MainActivity : Activity() {
                 else -> {
                     stopArmed = false
                     request(JSONObject().put("type", "stop"), "안내 종료")
+                    sub = null
                     hud.menu = null
                 }
             }

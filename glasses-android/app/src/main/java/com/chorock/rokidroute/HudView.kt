@@ -212,6 +212,9 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         /** 간소 화면 글자 칸 왼쪽 끝 (오른쪽 정렬이라 실제 글자는 오른쪽 아래에 붙는다) */
         private const val COMPACT_TEXT_X = 176f
 
+        /** 하차 알림 테두리를 깜빡이는 시간 */
+        const val ALIGHT_PULSE_MS = 8_000L
+
         /** 자동 모드: 다음 회전까지 이보다 멀면 도로·건물을 흐리게 */
         const val FAINT_FROM_M = 80.0
         /** 실제 위치를 이보다 오래 못 받으면 "위치 N초 전" 표시 */
@@ -314,10 +317,21 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
             } else canvas.drawText(s.destination, W - 18f - small.measureText(s.destination), 14f + 13f, small)
         }
 
+        // 하차 알림 (소리 없이): 화면 테두리. 처음 ALIGHT_PULSE_MS 동안 깜빡이고 그다음은 얇게 켜 둔다. 이번 정류장 = 흰색
+        if (s.alight != null && pairCode == null) {
+            val t = now - s.alightSince
+            val pulsing = t in 0 until ALIGHT_PULSE_MS
+            alightBorder.color = if (s.alight == "now") Color.WHITE else green
+            alightBorder.strokeWidth = if (pulsing) 4f else 2f
+            alightBorder.alpha = if (pulsing) (90 + 165 * abs(sin(t / 300.0 * Math.PI))).toInt() else 170
+            canvas.drawRoundRect(RectF(2f, 2f, W - 2f, H - 2f), 10f, 10f, alightBorder)
+            if (pulsing) postInvalidateDelayed(50)
+        }
+
         // 안내 두 줄
         val line1 = pairCode?.let { "연결 코드 $it" } ?: s.line1At(now)
         val line2 = if (pairCode != null) "폰 단축어 \"안경 연결\"에 입력" else s.line2
-        big.color = if (s.warn && pairCode == null) Color.WHITE else if (s.idle && pairCode == null) dim else green
+        big.color = if ((s.warn || s.alight == "now") && pairCode == null) Color.WHITE else if (s.idle && pairCode == null) dim else green
         mid.color = if (s.idle && pairCode == null) dim else green
         if (compact && s.stop != null && (s.stop.mine.isNotEmpty() || s.stop.others.isNotEmpty() || s.stop.error != null)) {
             drawStopBoard(canvas, s.stop, now - s.stepAt)
@@ -528,6 +542,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         drawDeviceStatus(canvas, bottom, "")
     }
 
+    private val alightBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val offlinePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13f; color = Color.WHITE; alpha = 220; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
     private val boardLine = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13f; typeface = Typeface.DEFAULT_BOLD; color = green; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
     private val boardLineTime = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13f; color = green; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
