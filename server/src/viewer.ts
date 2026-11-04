@@ -11,9 +11,11 @@ export const VIEWER_HTML = `<!doctype html>
   :root { --g: #00ff66; --dim: #4da86c; --bg: #0b0f0c; }
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--bg); color: var(--g); font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
-  main { max-width: 520px; margin: 0 auto; padding: 16px; }
+  /* 조작부는 위, 안경 화면은 맨 아래에 붙인다 (위 여백 최대, 아래 여백 0) */
+  main { max-width: 520px; margin: 0 auto; padding: 16px 16px 0; min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
+  .spacer { flex: 1; }
   /* 안경 화면: 480x282 dp */
-  .stage-wrap { position: relative; width: 100%; overflow: hidden; border-radius: 14px; box-shadow: 0 0 0 1px #133, 0 8px 30px #0008; }
+  .stage-wrap { position: relative; width: 100%; overflow: hidden; border-radius: 14px 14px 0 0; box-shadow: 0 0 0 1px #133; margin-bottom: 0; }
   .stage { position: absolute; left: 0; top: 0; width: 480px; height: 282px; transform-origin: top left; background: #000; }
   .glass { position: absolute; left: 0; top: 0; width: 480px; height: 282px; padding: 14px 18px; overflow: hidden; }
   .top, .bottom { display: flex; justify-content: space-between; font-size: 16px; height: 22px; color: var(--dim); }
@@ -22,7 +24,7 @@ export const VIEWER_HTML = `<!doctype html>
   .line2 { margin-top: 10px; font-size: 22px; line-height: 30px; max-height: 60px; overflow: hidden; word-break: keep-all; }
   .warn .line1 { color: #fff; }
   .idle .line1, .idle .line2 { color: var(--dim); }
-  .controls { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; margin-top: 14px; }
+  .controls { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; margin-top: 4px; }
   button { font: inherit; font-size: 17px; padding: 14px; border-radius: 12px; border: 1px solid #1f5; background: #062; color: #dfe; }
   button.secondary { background: transparent; color: var(--g); }
   .row { display: flex; gap: 8px; align-items: center; margin-top: 14px; font-size: 14px; color: var(--dim); flex-wrap: wrap; }
@@ -33,17 +35,6 @@ export const VIEWER_HTML = `<!doctype html>
 </head>
 <body>
 <main>
-  <div id="wrap" class="stage-wrap">
-    <div id="stage" class="stage">
-      <div id="glass" class="glass idle">
-        <div class="top"><span id="progress"></span><span id="dest"></span></div>
-        <div id="line1" class="line1">연결 전</div>
-        <div id="line2" class="line2">아래에 GLASS_TOKEN 을 넣으세요</div>
-        <div class="bottom"><span id="status"></span><span>탭 다음 · ▲ 이전</span></div>
-      </div>
-    </div>
-  </div>
-
   <div class="controls">
     <button id="prev" class="secondary">▲ 이전</button>
     <button id="next">탭 · 다음 ▼</button>
@@ -58,6 +49,18 @@ export const VIEWER_HTML = `<!doctype html>
     <small id="geoStatus"></small>
   </div>
   <div class="row"><small>키보드: Enter/↓ 다음, ↑ 이전. 토큰은 이 브라우저에만 저장됩니다.</small></div>
+  <div class="spacer"></div>
+  <div id="wrap" class="stage-wrap">
+    <div id="stage" class="stage">
+      <div id="glass" class="glass idle">
+        <div class="top"><span id="progress"></span><span id="dest"></span></div>
+        <div id="line1" class="line1">연결 전</div>
+        <div id="line2" class="line2">아래에 GLASS_TOKEN 을 넣으세요</div>
+        <div class="bottom"><span id="status"></span><span>탭 다음 · ▲ 이전</span></div>
+      </div>
+    </div>
+  </div>
+
 </main>
 <script>
 (() => {
