@@ -10,6 +10,7 @@ import { Pairing } from "./pairing.js";
 import { Ota } from "./ota.js";
 import { Chooser } from "./chooser.js";
 import { Favorites } from "./favorites.js";
+import { nearbyBoards } from "./nearby.js";
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -74,7 +75,8 @@ if (!api) log("API_TOKEN 이 없어 폰용 HTTP API(/location, /route, /nav, /st
 const roads = new RoadFeed(nav, log);
 /** 안경 APK 보관 폴더 (Railway 볼륨 /data). 업로드 토큰이 없으면 업로드만 막힌다 */
 const ota = new Ota(process.env.APP_DIR ?? "/data/app", process.env.OTA_UPLOAD_TOKEN ?? "", [GLASS_TOKEN, GLASS_DEVICE_TOKEN].filter(Boolean), log);
-const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, extraTokens: GLASS_DEVICE_TOKEN ? [GLASS_DEVICE_TOKEN] : [], nav, log, api, onPositions: api?.ingest, onReroute: api?.rerouteNow, roads, ota, chooser, favorites: api ? { list: api.favoritesForGlasses, go: api.goFavorite } : undefined });
+const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, extraTokens: GLASS_DEVICE_TOKEN ? [GLASS_DEVICE_TOKEN] : [], nav, log, api, onPositions: api?.ingest, onReroute: api?.rerouteNow, roads, ota, chooser, favorites: api ? { list: api.favoritesForGlasses, go: api.goFavorite } : undefined,
+  nearby: () => nearbyBoards(nav.lastKnownPosition, { kakao: KAKAO_REST_KEY, bus: process.env.DATA_GO_KR_KEY, subway: process.env.SEOUL_SUBWAY_KEY }, log) });
 const stopPoller = startRealtimePoller(nav, providersFromEnv(log), log);
 
 if (SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {

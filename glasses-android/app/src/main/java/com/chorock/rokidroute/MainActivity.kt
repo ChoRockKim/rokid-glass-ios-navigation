@@ -175,6 +175,23 @@ class MainActivity : Activity() {
             }
             // 시간이 지났거나 다른 화면에서 골랐다
             "choose-done" -> if (choosing == m.optInt("id")) { choosing = null; hud.menu = null }
+            // 버스·지하철 시간 (메뉴에서 열었을 때만 반영, 20초 뒤 다시 요청)
+            "nearby" -> if (sub is Sub.Nearby) {
+                val a = m.optJSONArray("boards") ?: org.json.JSONArray()
+                val boards = List(a.length()) { i ->
+                    a.getJSONObject(i).let { o ->
+                        val ls = o.optJSONArray("lines") ?: org.json.JSONArray()
+                        HudView.Board(
+                            o.optString("kind"), o.optString("name"), if (o.isNull("distance")) null else o.optInt("distance"),
+                            List(ls.length()) { j -> ls.getJSONObject(j).let { l -> StopBoard.Line(l.optString("line"), l.optJSONArray("times")?.let { t -> List(t.length()) { t.getString(it) } } ?: emptyList()) } },
+                            if (o.has("error")) o.optString("error") else null,
+                        )
+                    }
+                }
+                showSub(Sub.Nearby(boards, m.optString("note"), System.currentTimeMillis()), 0)
+                hud.removeCallbacks(refreshNearby)
+                hud.postDelayed(refreshNearby, 20_000)
+            }
             // 즐겨찾기 목록 (메뉴 → 즐겨찾기 를 열 때 요청)
             "favorites" -> if (sub == Sub.Loading) {
                 val a = m.optJSONArray("items") ?: org.json.JSONArray()
@@ -193,11 +210,15 @@ class MainActivity : Activity() {
 
     private sealed class Sub {
         object Loading : Sub()
+        /** 버스·지하철 시간 (주변 정류장·역 실시간 도착). 열려 있는 동안 20초마다 새로 받는다 */
+        data class Nearby(val boards: List<HudView.Board>?, val note: String, val at: Long?) : Sub()
         data class Categories(val data: FavData) : Sub()
         data class Places(val data: FavData, val category: String, val parentSel: Int) : Sub() {
             val items get() = data.items.filter { it.category == category }
         }
     }
+
+    private val refreshNearby = Runnable { if (sub is Sub.Nearby && hud.menu != null) client.send(JSONObject().put("type", "nearby")) }
 
     /** 메인 메뉴 아래 화면. null 이면 메인 메뉴 */
     private var sub: Sub? = null
@@ -213,6 +234,10 @@ class MainActivity : Activity() {
         val hint = "쓸기 이동 · 탭 선택 · 뒤로 이전"
         hud.menu = when (s) {
             Sub.Loading -> HudView.Menu(listOf("불러오는 중…"), title = "즐겨찾기", hint = hint)
+            is Sub.Nearby -> HudView.Menu(
+                emptyList(), title = "버스·지하철 시간" + (s.at?.let { " · ${HudView.clockText(it)} 기준" } ?: ""),
+                note = s.note, hint = "탭 새로고침 · 20초마다 갱신 · 뒤로 이전", boards = s.boards ?: emptyList(),
+            )
             is Sub.Categories ->
                 if (s.data.items.isEmpty()) HudView.Menu(listOf("등록된 장소 없음"), title = "즐겨찾기", note = "폰 브라우저 /places 에서 추가", hint = hint)
                 else HudView.Menu(s.data.categories.map { c -> "$c (${s.data.items.count { it.category == c }})" }, selected, title = "즐겨찾기", hint = hint)
@@ -223,15 +248,23 @@ class MainActivity : Activity() {
     }
 
     private fun handleSub(s: Sub, input: Input, m: HudView.Menu) {
-        val n = m.items.size
+        if (s is Sub.Nearby) {
+            when (input) {
+                Input.BACK -> { sub = null; hud.removeCallbacks(refreshNearby); hud.menu = HudView.Menu(menuLabels(), Item.NEARBY.ordinal) }
+                else -> client.send(JSONObject().put("type", "nearby"))
+            }
+            return
+        }
+        val n = m.items.size.coerceAtLeast(1)
         when (input) {
             Input.NEXT, Input.PREV -> showSub(s, (m.selected + (if (input == Input.NEXT) 1 else -1) + n) % n)
             Input.BACK -> when (s) {
                 Sub.Loading, is Sub.Categories -> { sub = null; hud.menu = HudView.Menu(menuLabels(), Item.FAVORITES.ordinal) }
+                is Sub.Nearby -> {}
                 is Sub.Places -> showSub(Sub.Categories(s.data), s.parentSel)
             }
             Input.SELECT -> when (s) {
-                Sub.Loading -> {}
+                Sub.Loading, is Sub.Nearby -> {}
                 is Sub.Categories -> s.data.categories.getOrNull(m.selected)?.let { showSub(Sub.Places(s.data, it, m.selected), 0) }
                 // 서버가 기존 길찾기와 같은 규칙으로: 직선 800m 안이면 도보, 아니면 대중교통 후보(안경에서 고름), 대중교통이 없으면 도보
                 is Sub.Places -> s.items.getOrNull(m.selected)?.let { fav ->
@@ -272,11 +305,12 @@ class MainActivity : Activity() {
     enum class Input { NEXT, PREV, SELECT, BACK }
 
     /** 메뉴 항목 (순서 = 화면 순서) */
-    private enum class Item { BACK_TO_NAV, FAVORITES, STOP, REROUTE, RECALIBRATE, MAP_MODE, UPDATE, EXIT }
+    private enum class Item { BACK_TO_NAV, FAVORITES, NEARBY, STOP, REROUTE, RECALIBRATE, MAP_MODE, UPDATE, EXIT }
 
     private fun label(item: Item): String = when (item) {
         Item.BACK_TO_NAV -> "길안내 화면으로"
         Item.FAVORITES -> "즐겨찾기"
+        Item.NEARBY -> "버스·지하철 시간"
         Item.STOP -> "안내 종료"
         Item.REROUTE -> "여기서 경로 다시 찾기"
         Item.RECALIBRATE -> "방향 다시 맞추기"
@@ -335,6 +369,10 @@ class MainActivity : Activity() {
             Item.FAVORITES -> {
                 showSub(Sub.Loading, 0)
                 client.send(JSONObject().put("type", "favorites"))
+            }
+            Item.NEARBY -> {
+                showSub(Sub.Nearby(null, "주변 정류장·역 찾는 중…", null), 0)
+                client.send(JSONObject().put("type", "nearby"))
             }
             Item.STOP -> when {
                 !navigating -> hud.menu = m.copy(note = "진행 중인 경로 없음")

@@ -42,6 +42,7 @@ class HudViewSnapshotTest {
     @Test
     fun menu() {
         val v = HudView(paparazzi.context) { null }
+        v.clock = { T0 }
         v.device = HudView.Device(battery = 64, network = "Wi-Fi", server = true)
         v.update = "0.3.3"
         v.menu = HudView.Menu(
@@ -86,6 +87,7 @@ class HudViewSnapshotTest {
     @Test
     fun favorites() {
         val v = HudView(paparazzi.context) { null }
+        v.clock = { T0 }
         v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
         v.menu = HudView.Menu(listOf("집 (1)", "회사 (2)", "맛집 (4)", "기타 (1)"), selected = 2, title = "즐겨찾기", hint = "쓸기 이동 · 탭 선택 · 뒤로 이전")
         paparazzi.snapshot(v, "14_favorites_categories")
@@ -102,16 +104,34 @@ class HudViewSnapshotTest {
         val routes = j.getJSONArray("routes").let { a -> List(a.length()) { HudView.RouteCard.fromJson(a.getJSONObject(it)) } }
         for (sel in listOf(0, 3)) {
             val v = HudView(paparazzi.context) { null }
+            v.clock = { T0 }
             v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
             v.menu = HudView.Menu(items, sel, title = j.getString("title"), hint = "쓸기 이동 · 탭 선택 · 뒤로 취소 · 60초 뒤 맨 위", routes = routes)
             paparazzi.snapshot(v, "16_route_cards_$sel")
         }
     }
 
+    /** 메뉴 → 버스·지하철 시간: 가까운 버스 정류장과 지하철역을 나란히 */
+    @Test
+    fun nearbyBoards() {
+        val v = HudView(paparazzi.context) { null }
+        v.clock = { T0 }
+        v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
+        fun l(line: String, vararg t: String) = StopBoard.Line(line, t.toList())
+        v.menu = HudView.Menu(emptyList(), title = "버스·지하철 시간 · 14:00 기준", hint = "탭 새로고침 · 20초마다 갱신 · 뒤로 이전", boards = listOf(
+            HudView.Board("bus", "회기역.경희의료원", 40, listOf(l("1215", "곧 도착"), l("273", "6분", "12분"), l("120", "8분", "21분"), l("147", "9분"), l("201", "14분"), l("N62", "운행대기")), null),
+            HudView.Board("subway", "회기역", 30, listOf(l("1호선 청량리행", "2역 전", "7분"), l("경의중앙선 문산행", "곧 도착"), l("1호선 소요산행", "4분", "11분"), l("경춘선 춘천행", "18분")), null),
+        ))
+        paparazzi.snapshot(v, "17_nearby_boards")
+        v.menu = v.menu!!.copy(boards = listOf(HudView.Board("bus", "버스", null, emptyList(), "버스 키 확인 필요 (401)"), HudView.Board("subway", "회기역", 30, listOf(l("1호선 청량리행", "2역 전", "7분")), null)))
+        paparazzi.snapshot(v, "18_nearby_bus_error")
+    }
+
     /** 폰에서 "맥도날드"로 시작 → 안경에서 지점 고르기 (서버 /route 를 실제 카카오로 돌려 받은 목록) */
     @Test
     fun chooseDestination() {
         val v = HudView(paparazzi.context) { null }
+        v.clock = { T0 }
         v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
         v.menu = HudView.Menu(
             listOf("맥도날드 외대점 · 768m", "맥도날드 전농점 · 1.3km", "맥도날드 중랑점 · 1.6km", "맥도날드 종암SK DT점 · 2.0km", "맥도날드 장안사거리점 · 2.3km"),
@@ -136,6 +156,7 @@ class HudViewSnapshotTest {
     @Test
     fun r08RingAccessibility() {
         val v = HudView(paparazzi.context) { null }
+        v.clock = { T0 }
         val got = mutableListOf<MainActivity.Input>()
         v.onInput = { got += it }
         // layoutlib 은 AccessibilityNodeInfo 가 스텁이라 노드 속성은 실기에서만 확인 가능. 여기서는 뷰 속성과 동작 전달만 본다
@@ -150,6 +171,7 @@ class HudViewSnapshotTest {
     @Test
     fun pairing() {
         val v = HudView(paparazzi.context) { null }
+        v.clock = { T0 }
         v.pairCode = "6567"
         paparazzi.snapshot(v, "00_pairing")
     }

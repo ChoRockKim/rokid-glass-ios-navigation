@@ -29,6 +29,8 @@ export function startGlassServer(opts: {
   ota?: Ota;
   /** 안경 메뉴 즐겨찾기: 목록, 고른 곳으로 안내 시작(결과 문장) */
   favorites?: { list: () => unknown; go: (id: string, mode: "walk" | "transit") => Promise<string> };
+  /** 안경 메뉴 "버스·지하철 시간": 지금 위치 주변 정류장·역 실시간 도착 */
+  nearby?: () => Promise<unknown>;
   /** 목적지 후보 선택지. ?choose=1 로 연결한 화면(안경 APK)에만 띄운다 */
   chooser?: Chooser;
 }): Server {
@@ -102,7 +104,10 @@ export function startGlassServer(opts: {
       if (msg.type === "next") nav.move(1);
       else if (msg.type === "prev") nav.move(-1);
       else if (msg.type === "sync") send(ws, nav.snapshot());
-      else if (msg.type === "favorites") send(ws, opts.favorites?.list() ?? { type: "favorites", categories: [], items: [] });
+      else if (msg.type === "nearby") {
+        if (!opts.nearby) send(ws, { type: "nearby", boards: [], note: "서버에서 지원하지 않음" });
+        else void opts.nearby().then((m) => send(ws, m)).catch((e) => send(ws, { type: "nearby", boards: [], note: `실패: ${e instanceof Error ? e.message : String(e)}` }));
+      } else if (msg.type === "favorites") send(ws, opts.favorites?.list() ?? { type: "favorites", categories: [], items: [] });
       else if (msg.type === "go" && opts.favorites) {
         // "auto"(0.3.12+): 대중교통 흐름으로 보내면 가까우면(직선 800m) 도보, 아니면 대중교통 후보 → 안경에서 고름
         const mode = msg.mode === "walk" ? "walk" : "transit";

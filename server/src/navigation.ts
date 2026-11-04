@@ -114,6 +114,8 @@ export type GlassInput =
   | { type: "stop" }
   /** 안경 메뉴: 지금 위치에서 경로 다시 찾기 */
   | { type: "reroute" }
+  /** 안경 메뉴: 지금 위치 주변 버스·지하철 도착 */
+  | { type: "nearby" }
   /** 안경 메뉴: 즐겨찾기 목록 요청 */
   | { type: "favorites" }
   /** 안경 메뉴: 즐겨찾기로 안내 시작 */

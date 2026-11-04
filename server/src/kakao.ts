@@ -140,6 +140,18 @@ export async function searchPlaces(query: string, key: string, near?: { lon: num
   return top ? [top] : [];
 }
 
+/** 카테고리(예: SW8 지하철역) 가까운 순 */
+export async function searchCategory(code: string, lon: number, lat: number, radius: number, key: string): Promise<PlaceCandidate[]> {
+  const url = new URL("/v2/local/search/category.json", BASE);
+  url.searchParams.set("category_group_code", code);
+  url.searchParams.set("x", String(lon));
+  url.searchParams.set("y", String(lat));
+  url.searchParams.set("radius", String(radius));
+  url.searchParams.set("sort", "distance");
+  const body = (await getJson(url, key)) as { documents?: RawDoc[] };
+  return (body.documents ?? []).map(toCandidate);
+}
+
 /** 주소(도로명·지번)로 좌표. 없으면 null */
 export async function searchAddress(query: string, key: string): Promise<Place | null> {
   const url = new URL("/v2/local/search/address.json", BASE);

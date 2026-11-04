@@ -15,7 +15,7 @@ export interface ArrivalProvider {
   fetch(ride: RideInfo): Promise<Arrival[]>;
 }
 
-async function getText(url: string): Promise<string> {
+export async function getText(url: string): Promise<string> {
   const res = await fetch(url, { signal: AbortSignal.timeout(8000), dispatcher });
   const text = await res.text();
   if (!res.ok) throw new Error(`${new URL(url).host} ${res.status}: ${text.slice(0, 200)}`);
@@ -60,7 +60,7 @@ export function parseEta(msg: string): number | null {
 
 // ── 서울 지하철 실시간 도착 (서울 열린데이터광장 realtimeStationArrival) ──
 // 공개 자료 기준 필드: subwayId, trainLineNm("청량리행 - 회기방면"), barvlDt(초), arvlMsg2, statnNm
-const SUBWAY_IDS: Record<string, string> = {
+export const SUBWAY_IDS: Record<string, string> = {
   "1001": "1호선", "1002": "2호선", "1003": "3호선", "1004": "4호선", "1005": "5호선", "1006": "6호선",
   "1007": "7호선", "1008": "8호선", "1009": "9호선", "1063": "경의중앙선", "1065": "공항철도", "1067": "경춘선",
   "1075": "수인분당선", "1077": "신분당선", "1092": "우이신설선", "1093": "서해선", "1081": "경강선", "1032": "GTX-A",
