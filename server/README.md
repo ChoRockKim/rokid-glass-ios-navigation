@@ -93,7 +93,9 @@ API_TOKEN=... npx tsx scripts/simulate-walk.ts 37.5962 127.0633 왕십리역 20 
 | 실시간 도착 폴링 | 지하철: Railway 에서 실제 호출 성공 (실시간 전용 키 필요). 버스: 키 없음, 미호출 |
 | Railway 배포 + Slack `/route`·대중교통 | 실제 확인 (`https://route-server-production.up.railway.app`) |
 | iPhone 단축어 "길안내" (현재 위치 → /route → 음성) | 실기 확인 |
-| 대중교통 단축어, Overland 실기 | 미확인 |
+| iPhone 단축어 "대중교통" (후보 선택 → 안내 시작) | 실기 확인 |
+| 버스 실시간 | 호출은 나감. 키 미활성으로 401 `등록되지 않은 서비스키` (2026-11-04 06:01) |
+| Overland 실기 | 미확인 |
 | 안경 앱 연동 | 로컬 검증 필요 (안경) |
 
 클라우드 세션(프록시 환경)에서 돌릴 때 허용 도메인에 필요한 것: `dapi.kakao.com`, `slack.com`, `wss-primary.slack.com`, `hooks.slack.com`(슬래시 커맨드 응답).

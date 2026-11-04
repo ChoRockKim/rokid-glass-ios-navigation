@@ -160,6 +160,7 @@ export function seoulBusProvider(key: string, base = "http://ws.bus.go.kr/api/re
 }
 
 export const POLL_MS = Number(process.env.REALTIME_POLL_MS ?? 20_000);
+const FAIL_BACKOFF_MS = 120_000;
 
 /** 활성 경로의 다음 탑승 구간을 주기적으로 조회한다. 탈 게 없으면 아무것도 안 부른다 */
 export function startRealtimePoller(nav: Navigator, providers: ArrivalProvider[], log: (m: string) => void) {
@@ -187,7 +188,9 @@ export function startRealtimePoller(nav: Navigator, providers: ArrivalProvider[]
       nav.setArrivals(up.step, arrivals);
       log(`realtime ${provider.name} ${up.step.ride.board}: ${arrivals.slice(0, 3).map((a) => `${a.line} ${a.message} eta=${a.etaSec ?? "-"}`).join(" | ") || "없음"}`);
     } catch (e) {
-      log(`realtime ${provider.name} 실패: ${e instanceof Error ? e.message : String(e)}`);
+      // 키 미활성 등으로 계속 실패할 때 20초마다 두드리지 않도록 잠시 쉰다
+      lastAt = Date.now() + FAIL_BACKOFF_MS - POLL_MS;
+      log(`realtime ${provider.name} 실패 (${FAIL_BACKOFF_MS / 1000}s 뒤 재시도): ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       busy = false;
     }
