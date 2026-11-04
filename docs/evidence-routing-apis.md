@@ -74,6 +74,7 @@
 - 실시간 도착은 별도 API 필요 (명세 미검증, 검색 결과 기준):
   - 서울 지하철: 서울 열린데이터광장 실시간 도착정보 `realtimeStationArrival` (역명으로 조회, data.seoul.go.kr 키). https://bsh-developer.tistory.com/798
     - **확인 (2026-11-04, 사용자가 브라우저로 호출):** 일반 인증키로 부르면 `{"status":500,"code":"ERROR-338","message":"해당 인증키로는 실시간 서비스를 사용할 수 없습니다.","total":0}`. **실시간 지하철 인증키가 따로 필요하다.** 오류는 최상위 `status/code/message` 형식.
+    - **실시간 키로 서버에서 호출 성공 (2026-11-04 05:37, Railway):** 외대앞, 1호선, `trainLineNm` 에 `회기방면` 필터 → `arvlMsg2` 예: `외대앞 도착`, `[6]번째 전역 (창동)`. `subwayId` 1001=1호선 매핑 맞음.
   - 서울 버스: 서울특별시_버스도착정보조회 서비스 (data.go.kr 키, 도착 예정 초·몇 번째 전 정류소). https://www.data.go.kr/data/15000314/openapi.do
   - 경기 버스: 경기도_버스도착정보 조회 (data.go.kr 키, stationId 필요). https://www.data.go.kr/data/15080346/openapi.do
   - 이 세션에서 `ws.bus.go.kr`, `swopenapi.seoul.go.kr`, `apis.data.go.kr`, `openapi.seoul.go.kr` 은 네트워크 정책으로 403.
