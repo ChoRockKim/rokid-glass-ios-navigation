@@ -221,8 +221,19 @@ export function createApi(deps: ApiDeps) {
       }
 
       if (route === "POST /transit/select") {
-        const n = num((body as Record<string, unknown>).option);
-        if (n === undefined) throw new HttpError(400, "option (1부터) is required");
+        // 번호(1부터) 또는 단축어 "목록에서 선택"으로 고른 후보 문장 그대로("① 16분 · …")
+        const opt = (body as Record<string, unknown>).option;
+        let n = num(opt);
+        if (n === undefined && typeof opt === "string") {
+          const t = opt.trim();
+          const circled = "①②③④⑤⑥⑦⑧⑨⑩".indexOf(t[0] ?? "");
+          if (circled >= 0) n = circled + 1;
+          else {
+            const i = pendingTransit.get()?.options.findIndex((o, k) => summarizeOption(o, k) === t) ?? -1;
+            if (i >= 0) n = i + 1;
+          }
+        }
+        if (n === undefined) throw new HttpError(400, "option (1부터 번호 또는 후보 문장) is required");
         let picked;
         try {
           picked = await selectTransit(n - 1, kakaoKey);
