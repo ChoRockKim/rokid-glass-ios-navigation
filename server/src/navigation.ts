@@ -65,6 +65,16 @@ export type GlassMessage =
   | { type: "arrived"; destination: string; text: string }
   | { type: "idle"; text: string };
 
+/** 미니맵용 메시지 (안경 화면 배경). 경로는 시작할 때 한 번, 위치는 바뀔 때마다 */
+export type MapMessage =
+  | {
+      type: "map-route";
+      segments: { kind: "walk" | "bus" | "subway"; points: [number, number][] }[];
+      turns: [number, number][]; // 각 단계 시작점 (단계 index 와 같은 순서)
+    }
+  | { type: "map-pos"; lon: number; lat: number; heading: number; snapped: boolean; next: number | null }
+  | { type: "map-roads"; lines: [number, number][][]; major: boolean[] };
+
 /** 안경에서 받는 메시지 */
 export type GlassInput =
   | { type: "next" }
@@ -178,6 +188,8 @@ export interface PositionResult {
 export class Navigator {
   private active: ActiveRoute | null = null;
   private listeners = new Set<(msg: GlassMessage) => void>();
+  private mapListeners = new Set<(msg: MapMessage) => void>();
+  private lastMapPos: MapMessage | null = null;
   private lastEmitted = "";
   /** 경로가 없을 때도 마지막 위치는 기억한다 (단축어 /route 에 출발지가 없을 때 사용) */
   lastKnownPosition: Position | null = null;
@@ -191,6 +203,51 @@ export class Navigator {
   onChange(fn: (msg: GlassMessage) => void) {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
+  }
+
+  onMap(fn: (msg: MapMessage) => void) {
+    this.mapListeners.add(fn);
+    return () => this.mapListeners.delete(fn);
+  }
+
+  private emitMap(msg: MapMessage) {
+    if (msg.type === "map-pos") this.lastMapPos = msg;
+    for (const fn of this.mapListeners) fn(msg);
+  }
+
+  /** 지금 경로의 미니맵 데이터 (새로 연결한 화면에 보낼 것) */
+  mapSnapshot(): MapMessage[] {
+    const a = this.active;
+    if (!a) return [];
+    const out: MapMessage[] = [this.routeMap(a)];
+    if (this.lastMapPos) out.push(this.lastMapPos);
+    else {
+      const p = a.tracker.pointAt(0);
+      if (p) out.push({ type: "map-pos", ...p, snapped: true, next: a.index + 1 < a.guide.length ? a.index + 1 : null });
+    }
+    return out;
+  }
+
+  private routeMap(a: ActiveRoute): MapMessage {
+    const q = (p: LonLat): [number, number] => [Math.round(p[0] * 1e6) / 1e6, Math.round(p[1] * 1e6) / 1e6];
+    return {
+      type: "map-route",
+      segments: a.guide.map((g) => ({ kind: g.ride ? g.ride.kind : "walk", points: g.points.map(q) })),
+      turns: a.guide.map((g) => q(g.points[0] ?? [0, 0])),
+    };
+  }
+
+  /** 진행 거리 기준 내 위치·방향을 미니맵에 알린다. 이탈 중이면 실제 위치 */
+  private emitPos(a: ActiveRoute, raw: Position | null) {
+    const next = a.index + 1 < a.guide.length ? a.index + 1 : null;
+    if (!a.offRoute && a.progress !== null) {
+      const p = a.tracker.pointAt(a.progress);
+      if (p) return this.emitMap({ type: "map-pos", ...p, snapped: true, next });
+    }
+    if (raw) {
+      const heading = (this.lastMapPos?.type === "map-pos" ? this.lastMapPos.heading : 0);
+      this.emitMap({ type: "map-pos", lon: raw.lon, lat: raw.lat, heading, snapped: false, next });
+    }
   }
 
   /** force=false 면 직전과 같은 내용(남은 거리는 10m 단위)은 보내지 않는다. 안경 화면 깜빡임 방지 */
@@ -222,6 +279,10 @@ export class Navigator {
       lastPosition: null,
       manualHold: null,
     };
+    this.lastMapPos = null;
+    this.emitMap(this.routeMap(this.active));
+    const p0 = this.active.tracker.pointAt(0);
+    if (p0) this.emitMap({ type: "map-pos", ...p0, snapped: true, next: guide.length > 1 ? 1 : null });
     this.emit();
   }
 
@@ -244,11 +305,17 @@ export class Navigator {
     }
     a.offRoute = false;
     a.offRouteCount = 0;
+    if (a.progress !== null) this.emitPos(a, null);
+    else {
+      const p = a.index < a.guide.length ? a.tracker.pointAt(a.tracker.stepStart[a.index] ?? 0) : null;
+      if (p) this.emitMap({ type: "map-pos", ...p, snapped: true, next: a.index + 1 < a.guide.length ? a.index + 1 : null });
+    }
     this.emit();
   }
 
   stop() {
     this.active = null;
+    this.lastMapPos = null;
     this.emit();
   }
 
@@ -319,6 +386,7 @@ export class Navigator {
       a.index = index;
     }
 
+    this.emitPos(a, p);
     return {
       accepted: true,
       progress: a.progress ?? undefined,

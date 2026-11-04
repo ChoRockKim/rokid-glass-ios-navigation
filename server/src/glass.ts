@@ -5,6 +5,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import type { GlassInput, Navigator, Position } from "./navigation.js";
 import { safeEqual, tokenFrom } from "./auth.js";
 import { VIEWER_HTML } from "./viewer.js";
+import type { RoadFeed } from "./roads.js";
 
 export function startGlassServer(opts: {
   port: number;
@@ -15,6 +16,8 @@ export function startGlassServer(opts: {
   api?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
   /** 안경이 보낸 위치를 반영 (재탐색 포함). 없으면 nav 에 바로 */
   onPositions?: (p: Position[]) => unknown;
+  /** 미니맵 배경 도로 */
+  roads?: RoadFeed;
 }): Server {
   const { port, token, nav, log, api } = opts;
   const onPositions = opts.onPositions ?? ((p: Position[]) => nav.updatePositions(p));
@@ -37,6 +40,7 @@ export function startGlassServer(opts: {
   });
 
   const wss = new WebSocketServer({ noServer: true });
+  const mapClients = new Set<WebSocket>();
 
   http.on("upgrade", (req, socket, head) => {
     const path = new URL(req.url ?? "/", "http://localhost").pathname;
@@ -56,6 +60,14 @@ export function startGlassServer(opts: {
   wss.on("connection", (ws, req) => {
     log(`glass connected (${req.socket.remoteAddress}), clients=${wss.clients.size}`);
     send(ws, nav.snapshot());
+    // 미니맵 메시지는 ?map=1 로 연결한 화면(/viewer)에만. 안경 앱(AIUI)은 모르는 type 을 "경로 없음"으로 처리하기 때문
+    const wantsMap = new URL(req.url ?? "/", "http://localhost").searchParams.get("map") === "1";
+    if (wantsMap) {
+      mapClients.add(ws);
+      for (const m of nav.mapSnapshot()) send(ws, m);
+      const r = opts.roads?.snapshot();
+      if (r) send(ws, r);
+    }
 
     ws.on("message", (raw) => {
       let msg: GlassInput;
@@ -71,11 +83,21 @@ export function startGlassServer(opts: {
         onPositions([{ lat: msg.lat, lon: msg.lon, acc: msg.acc, ts: msg.ts ?? Date.now() }]);
       }
     });
-    ws.on("close", () => log(`glass disconnected, clients=${wss.clients.size}`));
+    ws.on("close", () => {
+      mapClients.delete(ws);
+      log(`glass disconnected, clients=${wss.clients.size}`);
+    });
   });
 
   nav.onChange((msg) => {
     for (const ws of wss.clients) send(ws, msg);
+  });
+  // 미니맵: 경로·위치·주변 도로 → map=1 클라이언트에만
+  nav.onMap((msg) => {
+    for (const ws of mapClients) send(ws, msg);
+  });
+  opts.roads?.onRoads((msg) => {
+    for (const ws of mapClients) send(ws, msg);
   });
 
   // 핫스팟·프록시 경유 시 유휴 연결이 끊기지 않게 30초마다 ping

@@ -3,6 +3,7 @@ import { KakaoError } from "./kakao.js";
 import { Navigator, parseRouteArgs, formatDistance, formatMinutes, messageFor } from "./navigation.js";
 import { startGlassServer } from "./glass.js";
 import { createApi } from "./api.js";
+import { RoadFeed } from "./roads.js";
 import { planRoute, type PlaceInput } from "./planner.js";
 import { pendingTransit, planTransit, selectTransit, summarizeOption } from "./transit.js";
 import { providersFromEnv, startRealtimePoller } from "./realtime.js";
@@ -192,7 +193,8 @@ const api = API_TOKEN
   : undefined;
 if (!api) log("API_TOKEN 이 없어 폰용 HTTP API(/location, /route, /nav, /status)를 끕니다");
 
-const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, nav, log, api, onPositions: api?.ingest });
+const roads = new RoadFeed(nav, log);
+const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, nav, log, api, onPositions: api?.ingest, roads });
 const stopPoller = startRealtimePoller(nav, providersFromEnv(log), log);
 await app.start();
 log("slack socket mode connected");

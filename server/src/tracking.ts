@@ -86,6 +86,22 @@ export class RouteTracker {
     return search(-Infinity, Infinity);
   }
 
+  /** 진행 거리 s 지점의 좌표(경도, 위도)와 진행 방위(도, 북=0, 시계방향) */
+  pointAt(s: number): { lon: number; lat: number; heading: number } | null {
+    if (this.xy.length < 2) return null;
+    const t = Math.max(0, Math.min(s, this.length));
+    let i = 1;
+    while (i < this.xy.length - 1 && this.cum[i]! < t) i++;
+    const a = this.xy[i - 1]!;
+    const b = this.xy[i]!;
+    const seg = this.cum[i]! - this.cum[i - 1]!;
+    const f = seg > 0 ? (t - this.cum[i - 1]!) / seg : 0;
+    const x = a[0] + (b[0] - a[0]) * f;
+    const y = a[1] + (b[1] - a[1]) * f;
+    const heading = ((Math.atan2(b[0] - a[0], b[1] - a[1]) * 180) / Math.PI + 360) % 360;
+    return { lon: x / this.kx + this.lon0, lat: y / this.ky + this.lat0, heading };
+  }
+
   /** 진행 거리 s 에서 보여 줄 단계: 끝까지 advanceM 보다 많이 남은 첫 단계. 다 지났으면 steps.length (도착) */
   stepAt(s: number, advanceM: number): number {
     const i = this.stepEnd.findIndex((end) => end - s > advanceM);
