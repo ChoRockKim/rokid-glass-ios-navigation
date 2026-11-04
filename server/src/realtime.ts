@@ -38,6 +38,18 @@ export function stationName(name: string): string {
   return name.replace(/\(.*?\)/g, "").replace(/역$/, "").trim();
 }
 
+/** 지하철 arvlMsg2 를 안경용으로 줄인다. "[6]번째 전역 (창동)" → "6역 전" (2026-11-04 실제 응답 문구) */
+export function shortSubwayMsg(msg: string): string {
+  const n = msg.match(/\[(\d+)\]번째 전역/);
+  if (n) return `${n[1]}역 전`;
+  if (/전역 도착/.test(msg)) return "전역 도착";
+  if (/전역 출발/.test(msg)) return "전역 출발";
+  if (/진입/.test(msg)) return "진입 중";
+  if (/도착/.test(msg)) return "도착";
+  if (/출발/.test(msg)) return "출발";
+  return msg.replace(/\s*\(.*?\)\s*/g, "").trim();
+}
+
 /** "3분12초후[2번째 전]" → 192, "곧 도착" → 0, 그 외 null */
 export function parseEta(msg: string): number | null {
   if (/곧 ?도착|전역 ?도착|도착$|진입/.test(msg)) return 0;
@@ -82,7 +94,7 @@ export function subwayProvider(key: string, base = "http://swopenapi.seoul.go.kr
           return {
             line: SUBWAY_IDS[String(x.subwayId)] ?? r.lines[0] ?? "지하철",
             etaSec: Number.isFinite(sec) && sec > 0 ? sec : parseEta(msg),
-            message: msg,
+            message: shortSubwayMsg(msg),
             direction: String(x.trainLineNm ?? ""),
           };
         });
@@ -173,7 +185,7 @@ export function startRealtimePoller(nav: Navigator, providers: ArrivalProvider[]
     try {
       const arrivals = await provider.fetch(up.step.ride);
       nav.setArrivals(up.step, arrivals);
-      log(`realtime ${provider.name} ${up.step.ride.board}: ${arrivals.slice(0, 3).map((a) => `${a.line} ${a.message}`).join(" | ") || "없음"}`);
+      log(`realtime ${provider.name} ${up.step.ride.board}: ${arrivals.slice(0, 3).map((a) => `${a.line} ${a.message} eta=${a.etaSec ?? "-"}`).join(" | ") || "없음"}`);
     } catch (e) {
       log(`realtime ${provider.name} 실패: ${e instanceof Error ? e.message : String(e)}`);
     } finally {

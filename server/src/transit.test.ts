@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { parseTransit } from "./kakao.js";
 import { rideStep, summarizeOption } from "./transit.js";
 import { Navigator, arrivalText } from "./navigation.js";
-import { parseEta, stationName, xmlItems } from "./realtime.js";
+import { parseEta, shortSubwayMsg, stationName, xmlItems } from "./realtime.js";
 import type { GuideStep } from "./guide.js";
 
 // 2026-11-04 실제 카카오 대중교통 응답 중 1개 (외대앞 → 1호선 → 제기동 → 도보 → 421번 → 성동구청)
@@ -33,6 +33,10 @@ test("실시간 문구 파싱", () => {
   assert.equal(parseEta("곧 도착"), 0);
   assert.equal(parseEta("전역 도착"), 0);
   assert.equal(parseEta("운행종료"), null);
+  // 2026-11-04 서울 실시간 지하철 실제 응답 문구
+  assert.equal(shortSubwayMsg("[6]번째 전역 (창동)"), "6역 전");
+  assert.equal(shortSubwayMsg("외대앞 도착"), "도착");
+  assert.equal(parseEta("외대앞 도착"), 0);
   assert.equal(stationName("왕십리(성동구청)"), "왕십리");
   assert.equal(stationName("청량리(서울시립대입구)"), "청량리");
   assert.deepEqual(xmlItems("<r><itemList><rtNm>421</rtNm><arrmsg1>3분후</arrmsg1></itemList></r>", "itemList"), [{ rtNm: "421", arrmsg1: "3분후" }]);
