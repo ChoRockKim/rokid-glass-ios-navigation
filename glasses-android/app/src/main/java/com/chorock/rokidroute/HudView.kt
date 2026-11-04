@@ -107,19 +107,22 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         style = Paint.Style.STROKE; color = c; alpha = a; strokeWidth = w; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
         if (dash != null) pathEffect = DashPathEffect(dash, 0f)
     }
-    // 도로: 종류별 굵기의 아주 얕은 띠 (투과형 안경에서 칠한 면이 넓으면 앞을 가리므로 최소한으로)
-    // 보행로·철도: 점선. 서버 /viewer 와 같은 값
-    private val roadStyle = mapOf(
-        "major" to stroke(green, 7f, 51),
-        "road" to stroke(green, 4.5f, 38),
-        "service" to stroke(green, 2.5f, 31),
+    // 도로가 주인공: 큰길·일반 도로는 양쪽 가장자리 선(케이싱) + 속은 아주 얕게. 교차로에서 선이 이어지도록
+    // 모든 가장자리를 먼저 그리고 그 위에 검정(안경에서는 투명)으로 속을 지운다. 서버 /viewer 와 같은 값
+    private class Band(val edge: Paint, val hole: Paint, val fill: Paint)
+    private fun band(w: Float, edgeA: Int, fillA: Int) = Band(
+        stroke(dim, w + 2.4f, edgeA),
+        stroke(Color.BLACK, w, 255),
+        stroke(green, w, fillA),
+    )
+    private val bands = linkedMapOf("road" to band(5f, 170, 18), "major" to band(8f, 215, 26))
+    private val lineStyle = mapOf(
+        "service" to stroke(dim, 1.4f, 150),
         "path" to stroke(pathColor, 1.2f, 204, floatArrayOf(2f, 3f)),
         "rail" to stroke(pathColor, 1f, 153, floatArrayOf(6f, 3f)),
     )
-    private val roadOrder = listOf("service", "road", "major", "path", "rail")
-    // 건물: 아주 흐린 면 + 얇은 윤곽
-    private val bldgFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = green; alpha = 8 }
-    private val bldgLine = stroke(road, 0.8f, 115)
+    // 건물: 서버가 감싸는 직사각형으로 줄여 보낸다. 면 없이 아주 흐린 윤곽만 (도로가 지나가는 부분은 지워진다)
+    private val bldgLine = stroke(road, 0.7f, 90)
     private val routePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = green; alpha = 140; strokeWidth = 4f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
     private val ridePaint = Paint(routePaint).apply { strokeWidth = 4.5f; pathEffect = DashPathEffect(floatArrayOf(2f, 7f), 0f) }
     private val markStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = green; strokeWidth = 2f }
@@ -297,16 +300,16 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         canvas.save()
         canvas.clipRect(1f, 1f, W - 1f, H - 1f)
         state.roads?.let { r ->
-            for (b in r.buildings) {
-                val p = path(b).apply { close() }
-                canvas.drawPath(p, bldgFill)
-                canvas.drawPath(p, bldgLine)
-            }
+            for (b in r.buildings) canvas.drawPath(path(b).apply { close() }, bldgLine)
             val kinds = r.kinds.ifEmpty { r.major.map { if (it) "major" else "road" } }
-            for (k in roadOrder) {
-                val paint = roadStyle.getValue(k)
-                r.lines.forEachIndexed { i, line -> if (kinds.getOrNull(i) == k) canvas.drawPath(path(line), paint) }
-            }
+            val paths = r.lines.map { path(it) }
+            fun each(k: String, paint: Paint) = paths.forEachIndexed { i, p -> if (kinds.getOrNull(i) == k) canvas.drawPath(p, paint) }
+            each("service", lineStyle.getValue("service"))
+            for ((k, b) in bands) each(k, b.edge)
+            for ((k, b) in bands) each(k, b.hole)
+            for ((k, b) in bands) each(k, b.fill)
+            each("path", lineStyle.getValue("path"))
+            each("rail", lineStyle.getValue("rail"))
         }
         state.route?.let { r ->
             for (seg in r.segments) canvas.drawPath(path(seg.points), if (seg.kind == "walk") routePaint else ridePaint)

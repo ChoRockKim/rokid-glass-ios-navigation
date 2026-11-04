@@ -69,10 +69,73 @@ export function roadsFromTile(buf: Uint8Array, x: number, y: number, z: number, 
     const polys = (gj.geometry.type === "MultiPolygon" ? gj.geometry.coordinates : [gj.geometry.coordinates]) as [number, number][][][];
     for (const poly of polys) {
       const outer = poly[0];
-      if (outer && outer.length >= 3 && inBox(outer)) out.buildings.push(q(outer));
+      if (!outer || outer.length < 3 || !inBox(outer)) continue;
+      const box = simplifyBuilding(outer);
+      if (box) out.buildings.push(q(box));
     }
   }
   return out;
+}
+
+/** 이보다 작은 건물(창고·부속 건물 등)은 버린다 */
+const MIN_BUILDING_M2 = 60;
+/** 한 번에 보내는 건물 수 상한 (내 위치에서 가까운 순) */
+const MAX_BUILDINGS = 150;
+
+/**
+ * 건물 윤곽을 그 건물을 감싸는 가장 작은 (회전된) 직사각형 4점으로 바꾼다.
+ * 안경에서는 건물 모양보다 "여기 건물이 있다" 정도만 보이면 되고, 도로가 주인공이다.
+ * 면적이 MIN_BUILDING_M2 미만이면 null.
+ */
+export function simplifyBuilding(ring: [number, number][]): [number, number][] | null {
+  const lat0 = ring[0]![1];
+  const mx = 111_320 * Math.cos((lat0 * Math.PI) / 180), my = 110_540;
+  const lon0 = ring[0]![0];
+  const pts = ring.map(([lo, la]) => [(lo - lon0) * mx, (la - lat0) * my] as [number, number]);
+  // 넓이 (신발끈 공식)
+  let area = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [x1, y1] = pts[i]!, [x2, y2] = pts[(i + 1) % pts.length]!;
+    area += x1 * y2 - x2 * y1;
+  }
+  if (Math.abs(area) / 2 < MIN_BUILDING_M2) return null;
+  // 볼록 껍질의 각 변 방향으로 돌려 본 바운딩 박스 중 가장 작은 것
+  const hull = convexHull(pts);
+  let best: { a: number; c: number; s: number; x0: number; x1: number; y0: number; y1: number } | null = null;
+  for (let i = 0; i < hull.length; i++) {
+    const [ax, ay] = hull[i]!, [bx, by] = hull[(i + 1) % hull.length]!;
+    const len = Math.hypot(bx - ax, by - ay);
+    if (len < 1e-9) continue;
+    const c = (bx - ax) / len, s = (by - ay) / len;
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const [x, y] of hull) {
+      const u = x * c + y * s, v = -x * s + y * c;
+      x0 = Math.min(x0, u); x1 = Math.max(x1, u); y0 = Math.min(y0, v); y1 = Math.max(y1, v);
+    }
+    const a = (x1 - x0) * (y1 - y0);
+    if (!best || a < best.a) best = { a, c, s, x0, x1, y0, y1 };
+  }
+  if (!best) return null;
+  const { c, s, x0, x1, y0, y1 } = best;
+  const back = (u: number, v: number): [number, number] => [lon0 + (u * c - v * s) / mx, lat0 + (u * s + v * c) / my];
+  return [back(x0, y0), back(x1, y0), back(x1, y1), back(x0, y1)];
+}
+
+function convexHull(p: [number, number][]): [number, number][] {
+  const pts = [...p].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o: [number, number], a: [number, number], b: [number, number]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: [number, number][] = [], upper: [number, number][] = [];
+  for (const q of pts) { while (lower.length >= 2 && cross(lower[lower.length - 2]!, lower[lower.length - 1]!, q) <= 0) lower.pop(); lower.push(q); }
+  for (const q of pts.reverse()) { while (upper.length >= 2 && cross(upper[upper.length - 2]!, upper[upper.length - 1]!, q) <= 0) upper.pop(); upper.push(q); }
+  return lower.slice(0, -1).concat(upper.slice(0, -1));
+}
+
+/** 내 위치에서 가까운 건물 MAX_BUILDINGS 개만 */
+export function nearestBuildings(b: [number, number][][], lon: number, lat: number, max = MAX_BUILDINGS): [number, number][][] {
+  if (b.length <= max) return b;
+  const k = Math.cos((lat * Math.PI) / 180);
+  const d = (r: [number, number][]) => { const [x, y] = r[0]!; return ((x - lon) * k) ** 2 + (y - lat) ** 2; };
+  return b.map((r) => [d(r), r] as const).sort((a, z) => a[0] - z[0]).slice(0, max).map((e) => e[1]);
 }
 
 // 공개 Overpass 인스턴스. 앞에서부터 시도하고, 성공한 곳을 다음에 먼저 쓴다.
@@ -182,6 +245,7 @@ export class RoadFeed {
         out.buildings.push(...r.buildings);
       }
     }
+    out.buildings = nearestBuildings(out.buildings, lon, lat);
     return out;
   }
 

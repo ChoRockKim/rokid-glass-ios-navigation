@@ -36,7 +36,7 @@ export const VIEWER_HTML = `<!doctype html>
 <body>
 <div id="app" class="idle">
   <svg id="map" viewBox="0 0 480 282" xmlns="http://www.w3.org/2000/svg">
-    <g id="bldg" fill="#00ff66" fill-opacity="0.03" stroke="#2b7a45" stroke-opacity="0.45" stroke-width="0.8"></g>
+    <g id="bldg" fill="none" stroke="#2b7a45" stroke-opacity="0.35" stroke-width="0.7"></g>
     <g id="roads" fill="none" stroke-linecap="round" stroke-linejoin="round"></g>
     <g id="route" fill="none" stroke-linecap="round" stroke-linejoin="round"></g>
     <g id="marks"></g>
@@ -105,20 +105,19 @@ export const VIEWER_HTML = `<!doctype html>
     if (!map.pos) return;
     const P = project(map.pos);
     if (map.roads) {
-      // 칠한 면은 최소한으로 (투과형 안경에서 앞을 가리지 않게). 건물: 3% 면 + 얇은 윤곽 / 도로: 아주 얕은 띠 / 보행로·철도: 점선
+      // 도로가 주인공: 큰길·일반 도로는 양쪽 가장자리 선 + 속은 아주 얕게 (가장자리 → 검정으로 속 지우기 → 얕은 속 순서라 교차로가 이어진다)
+      // 건물: 서버가 감싼 직사각형으로 줄여 보낸 것을 흐린 윤곽만. 안경 앱(HudView)과 같은 값
       for (const b of map.roads.buildings || []) bldgG.appendChild(el('polygon', { points: b.map(P).join(' ') }));
-      const STYLE = {
-        major: { stroke: '#00ff66', 'stroke-width': 7, opacity: 0.2 },
-        road: { stroke: '#00ff66', 'stroke-width': 4.5, opacity: 0.15 },
-        service: { stroke: '#00ff66', 'stroke-width': 2.5, opacity: 0.12 },
-        path: { stroke: '#3a9a5c', 'stroke-width': 1.2, 'stroke-dasharray': '2 3', opacity: 0.8 },
-        rail: { stroke: '#3a9a5c', 'stroke-width': 1, 'stroke-dasharray': '6 3', opacity: 0.6 },
-      };
-      const order = ['service', 'road', 'major', 'path', 'rail'];
       const kinds = map.roads.kinds || map.roads.major.map((m) => (m ? 'major' : 'road'));
-      for (const k of order) map.roads.lines.forEach((line, i) => {
-        if (kinds[i] === k) roadsG.appendChild(el('polyline', { points: line.map(P).join(' '), ...STYLE[k] }));
-      });
+      const pts = map.roads.lines.map((line) => line.map(P).join(' '));
+      const each = (k, style) => pts.forEach((p, i) => { if (kinds[i] === k) roadsG.appendChild(el('polyline', { points: p, ...style })); });
+      const BAND = { road: { w: 5, edge: 0.67, fill: 0.07 }, major: { w: 8, edge: 0.84, fill: 0.1 } };
+      each('service', { stroke: '#4da86c', 'stroke-width': 1.4, opacity: 0.6 });
+      for (const [k, b] of Object.entries(BAND)) each(k, { stroke: '#4da86c', 'stroke-width': b.w + 2.4, opacity: b.edge });
+      for (const [k, b] of Object.entries(BAND)) each(k, { stroke: '#000', 'stroke-width': b.w });
+      for (const [k, b] of Object.entries(BAND)) each(k, { stroke: '#00ff66', 'stroke-width': b.w, opacity: b.fill });
+      each('path', { stroke: '#3a9a5c', 'stroke-width': 1.2, 'stroke-dasharray': '2 3', opacity: 0.8 });
+      each('rail', { stroke: '#3a9a5c', 'stroke-width': 1, 'stroke-dasharray': '6 3', opacity: 0.6 });
       $('attrib').textContent = '© OpenStreetMap';
     }
     if (map.route) {
