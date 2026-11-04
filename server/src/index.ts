@@ -29,6 +29,7 @@ const HELP = [
   "`/route 강남역 > 선릉역` 경로 시작 (`->`, `→`, `강남역에서 선릉역` 도 됨)",
   "`/route next` · `/route prev` 다음/이전 단계",
   "`/route status` 현재 단계",
+  "`/route detail` 카카오 원본 단계 전체",
   "`/route stop` 안내 종료",
 ].join("\n");
 
@@ -37,7 +38,16 @@ function statusText(): string {
   const msg = messageFor(a);
   if (msg.type === "idle") return "진행 중인 경로가 없습니다.";
   if (msg.type === "arrived") return `:checkered_flag: ${msg.text}`;
-  return `*${msg.index + 1}/${msg.total}* ${msg.text} (${formatDistance(msg.distance)}) → ${msg.destination}`;
+  return `*${msg.index + 1}/${msg.total}* ${msg.line1}\n${msg.line2}  _→ ${msg.destination}_`;
+}
+
+function detailText(): string {
+  const a = nav.current;
+  if (!a) return "진행 중인 경로가 없습니다.";
+  return [
+    `*카카오 원본 ${a.route.steps.length}단계* (안경에는 ${a.guide.length}단계로 합쳐서 표시)`,
+    ...a.guide.flatMap((g, i) => [`*${i + 1}.* ${g.line1} · ${g.line2}`, ...g.raw.map((r) => `      ◦ ${r}`)]),
+  ].join("\n");
 }
 
 const receiver = new SocketModeReceiver({ appToken: SLACK_APP_TOKEN, dispatcher, logLevel: LogLevel.INFO });
@@ -64,6 +74,7 @@ app.command("/route", async ({ command, ack, respond }) => {
     return ack({ response_type: "ephemeral", text: statusText() });
   }
   if (sub === "status") return ack({ response_type: "ephemeral", text: statusText() });
+  if (sub === "detail") return ack({ response_type: "ephemeral", text: detailText() });
   if (sub === "stop") {
     nav.stop();
     return ack({ response_type: "ephemeral", text: "안내를 종료했습니다." });
@@ -86,16 +97,17 @@ app.command("/route", async ({ command, ack, respond }) => {
       return;
     }
     const route = await walkRoute(from, to, KAKAO_REST_KEY);
-    nav.start({ from, to, route, index: 0, startedBy: command.user_id });
+    nav.start({ from, to, route, startedBy: command.user_id });
+    const guide = nav.current!.guide;
 
-    const lines = route.steps.map((s, i) => `${i + 1}. ${s.guidance}`);
+    const lines = guide.map((g, i) => `*${i + 1}.* ${g.line1}\n      ${g.line2}`);
     await respond({
       response_type: "ephemeral",
       text: [
-        `:walking: *${from.name} → ${to.name}* · ${formatDistance(route.totalDistance)} · 약 ${formatMinutes(route.totalTime)} · ${route.steps.length}단계`,
+        `:walking: *${from.name} → ${to.name}* · ${formatDistance(route.totalDistance)} · 약 ${formatMinutes(route.totalTime)} · ${guide.length}단계 (원본 ${route.steps.length})`,
         ...lines,
         route.landingUrl ? `<${route.landingUrl}|카카오맵에서 보기>` : "",
-        "_안경에 1단계를 보냈습니다. 탭 또는 `/route next` 로 다음 단계._",
+        "_안경에 1단계를 보냈습니다. 탭 또는 `/route next` 로 다음 단계. 원문은 `/route detail`._",
       ]
         .filter(Boolean)
         .join("\n"),

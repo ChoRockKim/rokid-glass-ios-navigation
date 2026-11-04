@@ -1,17 +1,31 @@
 // 진행 상태. 개인용이라 활성 경로는 하나만 둔다.
 import type { Place, WalkRoute } from "./kakao.js";
+import { buildGuide, formatDistance, type GuideStep, type Turn } from "./guide.js";
+
+export { formatDistance };
 
 export interface ActiveRoute {
   from: Place;
   to: Place;
-  route: WalkRoute;
-  index: number;
+  route: WalkRoute; // 카카오 원본 (단계 그대로)
+  guide: GuideStep[]; // 안경용으로 합친 단계
+  index: number; // guide 기준
   startedBy: string; // Slack user id
 }
 
-/** 안경으로 보내는 메시지. 안경은 text 한 줄만 표시하면 된다. */
+/** 안경으로 보내는 메시지. 한 줄만 쓰는 클라이언트는 text, 두 줄이면 line1/line2. */
 export type GlassMessage =
-  | { type: "step"; index: number; total: number; text: string; distance: number; destination: string }
+  | {
+      type: "step";
+      index: number;
+      total: number;
+      turn: Turn;
+      line1: string;
+      line2: string;
+      text: string;
+      distance: number;
+      destination: string;
+    }
   | { type: "arrived"; destination: string; text: string }
   | { type: "idle"; text: string };
 
@@ -26,24 +40,23 @@ export function parseRouteArgs(text: string): { from: string; to: string } | nul
   return { from: m[1].trim(), to: m[2].trim() };
 }
 
-export function formatDistance(m: number): string {
-  return m >= 1000 ? `${(m / 1000).toFixed(1)}km` : `${Math.round(m)}m`;
-}
-
 export function formatMinutes(s: number): string {
   return `${Math.max(1, Math.round(s / 60))}분`;
 }
 
 export function messageFor(active: ActiveRoute | null): GlassMessage {
   if (!active) return { type: "idle", text: "경로 없음 · Slack에서 /route" };
-  const { route, index, to } = active;
-  const step = route.steps[index];
+  const { guide, index, to } = active;
+  const step = guide[index];
   if (!step) return { type: "arrived", destination: to.name, text: `도착: ${to.name}` };
   return {
     type: "step",
     index,
-    total: route.steps.length,
-    text: step.guidance,
+    total: guide.length,
+    turn: step.turn,
+    line1: step.line1,
+    line2: step.line2,
+    text: `${step.line1} · ${step.line2}`,
     distance: step.distance,
     destination: to.name,
   };
@@ -67,15 +80,15 @@ export class Navigator {
     for (const fn of this.listeners) fn(msg);
   }
 
-  start(r: ActiveRoute) {
-    this.active = { ...r, index: 0 };
+  start(r: Omit<ActiveRoute, "guide" | "index">) {
+    this.active = { ...r, guide: buildGuide(r.route.steps), index: 0 };
     this.emit();
   }
 
-  /** index는 steps.length 까지 갈 수 있다 (= 도착) */
+  /** index는 guide.length 까지 갈 수 있다 (= 도착) */
   move(delta: number) {
     if (!this.active) return;
-    const max = this.active.route.steps.length;
+    const max = this.active.guide.length;
     this.active.index = Math.min(max, Math.max(0, this.active.index + delta));
     this.emit();
   }

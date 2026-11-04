@@ -13,12 +13,15 @@ export interface Place {
   y: number; // 위도
 }
 
+export type LonLat = [number, number];
+
 export interface Step {
   guidance: string;
   distance: number; // m
   time: number; // s
   x: number;
   y: number;
+  points: LonLat[]; // 이 단계의 경로 좌표 (경도, 위도)
 }
 
 export interface WalkRoute {
@@ -65,19 +68,20 @@ interface RawWalk {
   status?: string;
   route?: {
     properties?: { totalDistance?: number; totalTime?: number; landingUrl?: string };
-    legs?: { steps?: { properties: Step }[] }[];
+    legs?: { steps?: { properties: Omit<Step, "points">; path?: { points?: LonLat[] } }[] }[];
   };
 }
 
 export function parseWalk(body: RawWalk): WalkRoute {
   const route = body.route;
   if (!route?.legs?.length) throw new KakaoError(`도보 경로 없음 (status=${body.status ?? "?"})`);
-  const steps = route.legs.flatMap((l) => l.steps ?? []).map(({ properties: p }) => ({
+  const steps = route.legs.flatMap((l) => l.steps ?? []).map(({ properties: p, path }) => ({
     guidance: p.guidance,
     distance: p.distance,
     time: p.time,
     x: p.x,
     y: p.y,
+    points: path?.points?.length ? path.points : [[p.x, p.y] as LonLat],
   }));
   return {
     totalDistance: route.properties?.totalDistance ?? steps.reduce((a, s) => a + s.distance, 0),
