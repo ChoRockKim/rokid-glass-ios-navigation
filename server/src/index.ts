@@ -2,7 +2,7 @@ import bolt from "@slack/bolt";
 import { searchPlace, walkRoute, KakaoError } from "./kakao.js";
 import { Navigator, parseRouteArgs, formatDistance, formatMinutes, messageFor } from "./navigation.js";
 import { startGlassServer } from "./glass.js";
-import { dispatcher } from "./proxy.js";
+import { dispatcher, proxiedFetch } from "./proxy.js";
 
 const { App, LogLevel, SocketModeReceiver } = bolt;
 
@@ -40,10 +40,16 @@ function statusText(): string {
   return `*${msg.index + 1}/${msg.total}* ${msg.text} (${formatDistance(msg.distance)}) → ${msg.destination}`;
 }
 
+const receiver = new SocketModeReceiver({ appToken: SLACK_APP_TOKEN, dispatcher, logLevel: LogLevel.INFO });
+for (const ev of ["connected", "disconnected", "reconnecting"] as const) {
+  receiver.client.on(ev, () => log(`slack socket ${ev}`));
+}
+
 const app = new App({
   token: SLACK_BOT_TOKEN,
-  receiver: new SocketModeReceiver({ appToken: SLACK_APP_TOKEN, dispatcher, logLevel: LogLevel.INFO }),
+  receiver,
   logLevel: LogLevel.INFO,
+  ...(proxiedFetch ? { clientOptions: { fetch: proxiedFetch } } : {}),
 });
 
 app.command("/route", async ({ command, ack, respond }) => {
