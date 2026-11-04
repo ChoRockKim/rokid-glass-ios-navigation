@@ -89,6 +89,12 @@ class HeadingProvider(context: Context) : SensorEventListener {
         nudge(routeHeading, rate = 0.1f)
     }
 
+    /** 메뉴 "방향 다시 맞추기": 0° 보정을 버린다. 다음 지자기 값(RELATIVE_MAG) 또는 걷기 시작(RELATIVE)에 바로 다시 맞춘다 */
+    fun reset() {
+        calibrated = false
+        offset = 0f
+    }
+
     private fun nudge(trueHeading: Float, rate: Float) {
         val y = yaw ?: return
         val target = norm(trueHeading - y)

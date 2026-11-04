@@ -126,3 +126,30 @@ test("parseWalk + Navigator", () => {
   assert.equal(nav.snapshot().type, "idle");
   assert.deepEqual(seen, ["step", "step", "arrived", "arrived", "step", "idle"]);
 });
+
+test("etaSec: 남은 단계 시간 합, 지금 단계는 남은 거리 비율 / map-pos fixAge", () => {
+  const route = parseWalk(sample);
+  let t = 1_000_000;
+  const nav = new Navigator(() => t);
+  const pos: unknown[] = [];
+  nav.onMap((m) => { if (m.type === "map-pos") pos.push(m); });
+  const place = { name: "x", address: "", x: 0, y: 0 };
+  nav.start({ from: place, to: place, route, startedBy: "U1" });
+  const s0 = nav.snapshot();
+  assert.ok(s0.type === "step");
+  const total = nav.current!.guide.reduce((a, g) => a + g.time, 0);
+  assert.equal(s0.etaSec, total);
+  assert.equal((pos.at(-1) as { fixAge?: number }).fixAge, undefined); // 시작점은 실제 위치가 아님
+  // 첫 단계 절반쯤(북쪽으로 약 55m)
+  nav.updatePositions([{ lon: 127, lat: 37.5005, ts: t }]);
+  const s1 = nav.snapshot();
+  assert.ok(s1.type === "step" && s1.etaSec < total && s1.etaSec > total - nav.current!.guide[0]!.time);
+  assert.equal((pos.at(-1) as { fixAge?: number }).fixAge, 0);
+  // 다시 연결한 화면에는 받은 지 얼마나 됐는지
+  t += 45_000;
+  const snap = nav.mapSnapshot().find((m) => m.type === "map-pos") as { fixAge?: number };
+  assert.equal(snap.fixAge, 45_000);
+  // 수동으로 넘기면 fixAge 없음 (안경은 마지막 실제 위치 시각을 그대로 둔다)
+  nav.move(1);
+  assert.equal((pos.at(-1) as { fixAge?: number }).fixAge, undefined);
+});

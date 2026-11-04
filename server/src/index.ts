@@ -42,7 +42,7 @@ if (!api) log("API_TOKEN 이 없어 폰용 HTTP API(/location, /route, /nav, /st
 const roads = new RoadFeed(nav, log);
 /** 안경 APK 보관 폴더 (Railway 볼륨 /data). 업로드 토큰이 없으면 업로드만 막힌다 */
 const ota = new Ota(process.env.APP_DIR ?? "/data/app", process.env.OTA_UPLOAD_TOKEN ?? "", [GLASS_TOKEN, GLASS_DEVICE_TOKEN].filter(Boolean), log);
-const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, extraTokens: GLASS_DEVICE_TOKEN ? [GLASS_DEVICE_TOKEN] : [], nav, log, api, onPositions: api?.ingest, roads, ota });
+const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, extraTokens: GLASS_DEVICE_TOKEN ? [GLASS_DEVICE_TOKEN] : [], nav, log, api, onPositions: api?.ingest, onReroute: api?.rerouteNow, roads, ota });
 const stopPoller = startRealtimePoller(nav, providersFromEnv(log), log);
 
 if (SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {

@@ -17,7 +17,7 @@ import { KakaoError } from "./kakao.js";
 import { messageFor, formatMinutes, type Navigator, type Position } from "./navigation.js";
 import { formatDistance } from "./guide.js";
 import { planRoute, type PlaceInput } from "./planner.js";
-import { pendingTransit, planTransit, selectTransit, speakOption, summarizeOption } from "./transit.js";
+import { buildTransitGuide, pendingTransit, planTransit, selectTransit, speakOption, summarizeOption } from "./transit.js";
 import { safeEqual, tokenFrom } from "./auth.js";
 import type { Pairing } from "./pairing.js";
 
@@ -120,6 +120,42 @@ export function createApi(deps: ApiDeps) {
       notify?.(`:arrows_counterclockwise: 경로를 벗어나 다시 찾았습니다 · ${a.to.name}까지 ${formatDistance(route.totalDistance)}`);
     } catch (e) {
       log(`reroute failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      rerouting = false;
+    }
+  }
+
+  /**
+   * 안경 메뉴 "경로 다시 찾기": 마지막 위치에서 같은 목적지로. 도보는 도보로,
+   * 대중교통은 대중교통 후보 중 가장 빠른 것으로 (안경에서는 후보를 고를 수 없으므로). 결과 문장을 돌려준다
+   */
+  async function rerouteNow(): Promise<string> {
+    const a = nav.current;
+    if (!a) return "진행 중인 경로 없음";
+    const p = a.lastPosition ?? nav.lastKnownPosition;
+    if (!p) return "위치를 아직 못 받음";
+    if (rerouting) return "이미 찾는 중";
+    rerouting = true;
+    lastReroute = Date.now();
+    const here = { lon: p.lon, lat: p.lat };
+    const to = { lon: a.to.x, lat: a.to.y, name: a.to.name };
+    try {
+      if (a.mode === "transit") {
+        const plan = await planTransit(here, to, kakaoKey);
+        const option = plan.options[0];
+        if (!option) return "대중교통 경로 없음";
+        const { guide, route } = await buildTransitGuide(plan, option, kakaoKey);
+        nav.start({ from: plan.from, to: a.to, route, guide, mode: "transit", startedBy: a.startedBy });
+        log(`manual reroute (transit): ${summarizeOption(option, 0)}`);
+        return `다시 찾음 · ${summarizeOption(option, 0).replace(/^\S+\s/, "")}`;
+      }
+      const { from, route } = await planRoute(here, to, kakaoKey);
+      nav.reroute(from, route);
+      log(`manual reroute: ${route.totalDistance}m`);
+      return `다시 찾음 · ${formatDistance(route.totalDistance)}`;
+    } catch (e) {
+      log(`manual reroute failed: ${e instanceof Error ? e.message : String(e)}`);
+      return "다시 찾기 실패";
     } finally {
       rerouting = false;
     }
@@ -302,5 +338,5 @@ export function createApi(deps: ApiDeps) {
     }
     return false;
   };
-  return Object.assign(handle, { ingest });
+  return Object.assign(handle, { ingest, rerouteNow });
 }

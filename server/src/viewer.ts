@@ -69,7 +69,8 @@ export const VIEWER_HTML = `<!doctype html>
       app.className = m.offRoute ? 'warn' : 'step';
       $('line1').textContent = m.line1 || m.text || '';
       $('line2').textContent = m.line2 || '';
-      $('progress').textContent = (m.index + 1) + '/' + m.total;
+      const eta = typeof m.etaSec === 'number' ? new Date(Date.now() + m.etaSec * 1000) : null;
+      $('progress').textContent = (m.index + 1) + '/' + m.total + (eta ? ' · ' + String(eta.getHours()).padStart(2, '0') + ':' + String(eta.getMinutes()).padStart(2, '0') + ' 도착' : '');
       $('dest').textContent = m.destination ? '→ ' + m.destination : '';
     } else if (m.type === 'arrived') {
       app.className = 'step';

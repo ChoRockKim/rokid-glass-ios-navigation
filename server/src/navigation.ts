@@ -50,6 +50,8 @@ export type GlassMessage =
       text: string;
       distance: number; // 이 단계 전체 거리
       remaining: number | null; // 위치 추적 중일 때 이 단계 끝까지 남은 거리
+      /** 목적지까지 남은 예상 시간(초). 안경은 받은 시각 + etaSec 로 도착 시각을 표시 (서버·안경 시계 차이 무관) */
+      etaSec: number;
       offRoute: boolean;
       destination: string;
       ride?: {
@@ -72,7 +74,16 @@ export type MapMessage =
       segments: { kind: "walk" | "bus" | "subway"; points: [number, number][] }[];
       turns: [number, number][]; // 각 단계 시작점 (단계 index 와 같은 순서)
     }
-  | { type: "map-pos"; lon: number; lat: number; heading: number; snapped: boolean; next: number | null }
+  | {
+      type: "map-pos";
+      lon: number;
+      lat: number;
+      heading: number;
+      snapped: boolean;
+      next: number | null;
+      /** 실제 위치(폰·안경 GPS)에서 나온 것이면, 그 위치를 받은 지 몇 ms 지났는지. 수동 다음/이전으로 옮긴 것이면 없음 */
+      fixAge?: number;
+    }
   | {
       type: "map-roads";
       lines: [number, number][][];
@@ -91,6 +102,10 @@ export type GlassInput =
   | { type: "next" }
   | { type: "prev" }
   | { type: "sync" }
+  /** 안경 메뉴: 안내 종료 */
+  | { type: "stop" }
+  /** 안경 메뉴: 지금 위치에서 경로 다시 찾기 */
+  | { type: "reroute" }
   /** 안경 앱이 navigator.geolocation 으로 받은 위치 (AIUI). 출처(안경/폰)는 미확인 */
   | { type: "position"; lat: number; lon: number; acc?: number; ts?: number };
 
@@ -161,6 +176,28 @@ function rideView(a: ActiveRoute, step: GuideStep, now: number) {
   };
 }
 
+/** 목적지까지 남은 예상 시간(초). 지금 단계는 남은 거리 비율로, 아직 안 탄 버스·지하철은 실시간 첫 도착까지 기다리는 시간을 더한다 */
+export function etaSecFor(a: ActiveRoute, now: number): number {
+  let t = 0;
+  for (let i = a.index; i < a.guide.length; i++) {
+    const step = a.guide[i]!;
+    if (i > a.index) {
+      t += step.time;
+      continue;
+    }
+    // 남은 비율은 경로선 길이 기준 (카카오 distance 와 좌표 길이가 다를 수 있다)
+    const rem = remainingOf(a);
+    const len = (a.tracker.stepEnd[i] ?? 0) - (a.tracker.stepStart[i] ?? 0);
+    t += rem === null || len <= 0 ? step.time : step.time * Math.min(1, rem / len);
+    if (step.ride) {
+      const rv = rideView(a, step, now);
+      const first = rv.ride.arrivals[0]?.etaSec;
+      if (!rv.ride.boarded && first !== null && first !== undefined) t += Math.max(0, first);
+    }
+  }
+  return Math.round(t);
+}
+
 export function messageFor(active: ActiveRoute | null, now = Date.now()): GlassMessage {
   if (!active) return { type: "idle", text: "경로 없음" };
   const { guide, index, to } = active;
@@ -180,6 +217,7 @@ export function messageFor(active: ActiveRoute | null, now = Date.now()): GlassM
     text: `${line1} · ${line2}`,
     distance: step.distance,
     remaining,
+    etaSec: etaSecFor(active, now),
     offRoute: active.offRoute,
     destination: to.name,
     ...(rv ? { ride: rv.ride } : {}),
@@ -201,6 +239,8 @@ export class Navigator {
   private listeners = new Set<(msg: GlassMessage) => void>();
   private mapListeners = new Set<(msg: MapMessage) => void>();
   private lastMapPos: MapMessage | null = null;
+  /** 마지막으로 실제 위치를 반영한 시각 (서버 시계) */
+  private lastFixAt: number | null = null;
   private lastEmitted = "";
   /** 경로가 없을 때도 마지막 위치는 기억한다 (단축어 /route 에 출발지가 없을 때 사용) */
   lastKnownPosition: Position | null = null;
@@ -231,7 +271,10 @@ export class Navigator {
     const a = this.active;
     if (!a) return [];
     const out: MapMessage[] = [this.routeMap(a)];
-    if (this.lastMapPos) out.push(this.lastMapPos);
+    if (this.lastMapPos?.type === "map-pos") {
+      const { fixAge: _, ...pos } = this.lastMapPos;
+      out.push(this.lastFixAt === null ? pos : { ...pos, fixAge: this.now() - this.lastFixAt });
+    }
     else {
       const p = a.tracker.pointAt(0);
       if (p) out.push({ type: "map-pos", ...p, snapped: true, next: a.index + 1 < a.guide.length ? a.index + 1 : null });
@@ -251,13 +294,14 @@ export class Navigator {
   /** 진행 거리 기준 내 위치·방향을 미니맵에 알린다. 이탈 중이면 실제 위치 */
   private emitPos(a: ActiveRoute, raw: Position | null) {
     const next = a.index + 1 < a.guide.length ? a.index + 1 : null;
+    const fix = raw ? { fixAge: 0 } : {};
     if (!a.offRoute && a.progress !== null) {
       const p = a.tracker.pointAt(a.progress);
-      if (p) return this.emitMap({ type: "map-pos", ...p, snapped: true, next });
+      if (p) return this.emitMap({ type: "map-pos", ...p, snapped: true, next, ...fix });
     }
     if (raw) {
       const heading = (this.lastMapPos?.type === "map-pos" ? this.lastMapPos.heading : 0);
-      this.emitMap({ type: "map-pos", lon: raw.lon, lat: raw.lat, heading, snapped: false, next });
+      this.emitMap({ type: "map-pos", lon: raw.lon, lat: raw.lat, heading, snapped: false, next, ...fix });
     }
   }
 
@@ -265,7 +309,9 @@ export class Navigator {
   private emit(force = true) {
     const msg = messageFor(this.active, this.now());
     const key = JSON.stringify(
-      msg.type === "step" ? { ...msg, remaining: msg.remaining === null ? null : Math.round(msg.remaining / 10), line2: undefined, text: undefined } : msg,
+      msg.type === "step"
+        ? { ...msg, remaining: msg.remaining === null ? null : Math.round(msg.remaining / 10), etaSec: Math.round(msg.etaSec / 60), line2: undefined, text: undefined }
+        : msg,
     );
     if (!force && key === this.lastEmitted) return;
     this.lastEmitted = key;
@@ -291,6 +337,7 @@ export class Navigator {
       manualHold: null,
     };
     this.lastMapPos = null;
+    this.lastFixAt = null;
     this.emitMap(this.routeMap(this.active));
     const p0 = this.active.tracker.pointAt(0);
     if (p0) this.emitMap({ type: "map-pos", ...p0, snapped: true, next: guide.length > 1 ? 1 : null });
@@ -375,6 +422,7 @@ export class Navigator {
     const a = this.active;
     if (!a) return { accepted: false, reason: "no-route" };
     a.lastPosition = p;
+    this.lastFixAt = this.now();
 
     const proj = a.tracker.project([p.lon, p.lat] as LonLat, a.progress ?? undefined);
     if (!proj) return { accepted: false, reason: "no-route" };

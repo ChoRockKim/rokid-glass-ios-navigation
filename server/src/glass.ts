@@ -19,6 +19,8 @@ export function startGlassServer(opts: {
   api?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
   /** 안경이 보낸 위치를 반영 (재탐색 포함). 없으면 nav 에 바로 */
   onPositions?: (p: Position[]) => unknown;
+  /** 안경 메뉴 "경로 다시 찾기". 결과 문장을 그 안경에만 notice 로 돌려준다 */
+  onReroute?: () => Promise<string>;
   /** 미니맵 배경 도로 */
   roads?: RoadFeed;
   /** 안경 앱 OTA (/app/*) */
@@ -86,6 +88,13 @@ export function startGlassServer(opts: {
       if (msg.type === "next") nav.move(1);
       else if (msg.type === "prev") nav.move(-1);
       else if (msg.type === "sync") send(ws, nav.snapshot());
+      else if (msg.type === "stop") {
+        log("glass: stop");
+        nav.stop();
+      } else if (msg.type === "reroute") {
+        if (!opts.onReroute) send(ws, { type: "notice", text: "서버에서 다시 찾기를 지원하지 않음" });
+        else void opts.onReroute().then((text) => send(ws, { type: "notice", text }));
+      }
       else if (msg.type === "position" && Number.isFinite(msg.lat) && Number.isFinite(msg.lon)) {
         onPositions([{ lat: msg.lat, lon: msg.lon, acc: msg.acc, ts: msg.ts ?? Date.now() }]);
       }

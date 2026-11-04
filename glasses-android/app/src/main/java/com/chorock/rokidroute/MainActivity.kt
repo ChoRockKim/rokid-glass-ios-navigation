@@ -15,7 +15,7 @@ import org.json.JSONObject
 /**
  * 안경 길안내 화면.
  * 서버(route-server)의 WebSocket /glass?map=1 에 붙어 안내 문구와 미니맵을 그린다.
- * 입력: 탭(ENTER/DPAD_CENTER)·앞으로(DPAD_RIGHT/DOWN) = 다음, 뒤로(DPAD_LEFT/UP) = 이전. BACK 은 기본 동작.
+ * 입력: 탭(ENTER/DPAD_CENTER)·앞으로(DPAD_RIGHT/DOWN) = 다음, 뒤로(DPAD_LEFT/UP) = 이전, BACK = 메뉴.
  *       (Rokid_Claude 주석: 탭=ENTER, 쓸기=DPAD_LEFT/RIGHT, 더블탭=BACK. 쓸기 방향과 다음/이전 대응은 실기 확인 필요)
  */
 class MainActivity : Activity() {
@@ -24,6 +24,8 @@ class MainActivity : Activity() {
     private lateinit var heading: HeadingProvider
     private lateinit var updater: Updater
     private var lastCalib: MapPos? = null
+    private lateinit var prefs: android.content.SharedPreferences
+    private var checkedUpdate = false
 
     private fun distM(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
         val dy = (lat2 - lat1) * 110_540
@@ -46,7 +48,8 @@ class MainActivity : Activity() {
         root.addView(hud, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
         setContentView(root)
 
-        val prefs = getSharedPreferences("route", Context.MODE_PRIVATE)
+        prefs = getSharedPreferences("route", Context.MODE_PRIVATE)
+        hud.mapMode = runCatching { HudView.MapMode.valueOf(prefs.getString("mapMode", "AUTO")!!) }.getOrDefault(HudView.MapMode.AUTO)
         client = ServerClient(
             base = BuildConfig.SERVER_BASE,
             tokenStore = object : ServerClient.TokenStore {
@@ -66,12 +69,23 @@ class MainActivity : Activity() {
                 hud.state = hud.state.copy(status = it)
                 // 상태 문구가 비면 서버와 연결된 것 (ServerClient.onOpen 에서 "" 를 보낸다)
                 hud.device = hud.device.copy(server = it.isEmpty() && hud.pairCode == null)
+                // 처음 연결되면 새 버전이 있는지 한 번 조용히 확인 (설치는 메뉴에서 직접)
+                if (it.isEmpty() && hud.pairCode == null && !checkedUpdate) {
+                    checkedUpdate = true
+                    hud.postDelayed({ updater.check() }, 3_000)
+                }
             },
             onPairCode = { hud.pairCode = it },
         )
         updater = Updater(this, BuildConfig.SERVER_BASE, token = { prefs.getString("glassToken", null) ?: BuildConfig.DEVICE_TOKEN.takeIf { it.isNotEmpty() } }) { note ->
-            hud.menu = hud.menu?.copy(note = note)
+            hud.update = updater.available?.versionName
+            hud.menu = hud.menu?.let { it.copy(items = menuLabels(), note = note) }
         }
+        // 켜 둔 채로 오래 쓰면 6시간마다 다시 확인
+        val recheck = object : Runnable {
+            override fun run() { updater.check(); hud.postDelayed(this, 6 * 3600_000L) }
+        }
+        hud.postDelayed(recheck, 6 * 3600_000L)
         val dm = resources.displayMetrics
         val screen = "${dm.widthPixels}x${dm.heightPixels} d${dm.density}"
         Log.i("Route", "server=${BuildConfig.SERVER_BASE} heading=${heading.mode} screen=$screen")
@@ -142,12 +156,44 @@ class MainActivity : Activity() {
             }
         }
         hud.state = next
+        // 메뉴 "경로 다시 찾기" 결과 (이 안경에만 온다)
+        if (m.optString("type") == "notice") showNotice(m.optString("text"))
+    }
+
+    private val clearNotice = Runnable { hud.notice = null }
+
+    /** 메뉴가 열려 있으면 메뉴 아래 문구로, 닫혀 있으면 왼쪽 아래에 5초 */
+    private fun showNotice(text: String) {
+        val menu = hud.menu
+        if (menu != null) {
+            hud.menu = menu.copy(note = text)
+            return
+        }
+        hud.notice = text
+        hud.removeCallbacks(clearNotice)
+        hud.postDelayed(clearNotice, 5_000)
     }
 
     /** 안경 터치·R08 링 등 모든 입력을 이 네 동작으로 바꿔서 처리한다 */
     enum class Input { NEXT, PREV, SELECT, BACK }
 
-    private val menuItems = listOf("길안내 화면으로", "업데이트 확인", "앱 종료")
+    /** 메뉴 항목 (순서 = 화면 순서) */
+    private enum class Item { BACK_TO_NAV, STOP, REROUTE, RECALIBRATE, MAP_MODE, UPDATE, EXIT }
+
+    private fun label(item: Item): String = when (item) {
+        Item.BACK_TO_NAV -> "길안내 화면으로"
+        Item.STOP -> "안내 종료"
+        Item.REROUTE -> "여기서 경로 다시 찾기"
+        Item.RECALIBRATE -> "방향 다시 맞추기"
+        Item.MAP_MODE -> "지도: ${hud.mapMode.label}"
+        Item.UPDATE -> updater.available?.let { "업데이트 설치 (${it.versionName})" } ?: "업데이트 확인"
+        Item.EXIT -> "앱 종료"
+    }
+
+    private fun menuLabels() = Item.values().map(::label)
+
+    /** 안내 종료는 실수로 누르지 않게 두 번 선택해야 한다 */
+    private var stopArmed = false
 
     fun handle(input: Input) {
         val m = hud.menu
@@ -156,19 +202,61 @@ class MainActivity : Activity() {
             when (input) {
                 Input.SELECT, Input.NEXT -> client.send(JSONObject().put("type", "next"))
                 Input.PREV -> client.send(JSONObject().put("type", "prev"))
-                Input.BACK -> hud.menu = HudView.Menu(menuItems)
+                Input.BACK -> { stopArmed = false; hud.menu = HudView.Menu(menuLabels()) }
             }
             return
         }
+        val n = m.items.size
         when (input) {
-            Input.NEXT -> hud.menu = m.copy(selected = (m.selected + 1) % m.items.size)
-            Input.PREV -> hud.menu = m.copy(selected = (m.selected - 1 + m.items.size) % m.items.size)
+            Input.NEXT -> { stopArmed = false; hud.menu = m.copy(selected = (m.selected + 1) % n, note = "") }
+            Input.PREV -> { stopArmed = false; hud.menu = m.copy(selected = (m.selected - 1 + n) % n, note = "") }
             Input.BACK -> hud.menu = null
-            Input.SELECT -> when (m.selected) {
-                0 -> hud.menu = null
-                1 -> if (updater.available != null) updater.install() else updater.check()
-                2 -> finishAndRemoveTask()
+            Input.SELECT -> select(Item.values()[m.selected], m)
+        }
+    }
+
+    private fun select(item: Item, m: HudView.Menu) {
+        val navigating = !hud.state.idle && hud.state.progress.isNotEmpty()
+        when (item) {
+            Item.BACK_TO_NAV -> hud.menu = null
+            Item.STOP -> when {
+                !navigating -> hud.menu = m.copy(note = "진행 중인 경로 없음")
+                !stopArmed -> { stopArmed = true; hud.menu = m.copy(note = "한 번 더 누르면 안내를 끝냅니다") }
+                else -> {
+                    stopArmed = false
+                    client.send(JSONObject().put("type", "stop"))
+                    hud.menu = null
+                }
             }
+            Item.REROUTE -> {
+                if (!navigating) { hud.menu = m.copy(note = "진행 중인 경로 없음"); return }
+                client.send(JSONObject().put("type", "reroute"))
+                hud.menu = m.copy(note = "다시 찾는 중…")
+            }
+            Item.RECALIBRATE -> {
+                heading.reset()
+                lastCalib = null
+                val note = when (heading.mode) {
+                    HeadingProvider.Mode.ABSOLUTE -> "북쪽 기준 센서라 맞출 필요 없음"
+                    HeadingProvider.Mode.RELATIVE_MAG -> "지자기로 다시 맞췄습니다"
+                    HeadingProvider.Mode.RELATIVE -> "걷기 시작하면 경로 방향으로 다시 맞춥니다"
+                    HeadingProvider.Mode.NONE -> "방향 센서 없음 (진행 방향이 위)"
+                }
+                hud.menu = m.copy(note = note)
+            }
+            Item.MAP_MODE -> {
+                val modes = HudView.MapMode.values()
+                hud.mapMode = modes[(hud.mapMode.ordinal + 1) % modes.size]
+                prefs.edit().putString("mapMode", hud.mapMode.name).apply()
+                val note = when (hud.mapMode) {
+                    HudView.MapMode.AUTO -> "회전까지 ${HudView.FAINT_FROM_M.toInt()}m 넘게 남으면 흐리게"
+                    HudView.MapMode.ALWAYS -> "지도를 항상 또렷하게"
+                    HudView.MapMode.OFF -> "지도 없이 글자만"
+                }
+                hud.menu = m.copy(items = menuLabels(), note = note)
+            }
+            Item.UPDATE -> if (updater.available != null) updater.install() else updater.check()
+            Item.EXIT -> finishAndRemoveTask()
         }
     }
 

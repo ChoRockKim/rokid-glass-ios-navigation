@@ -18,6 +18,16 @@ import org.junit.Test
 class HudViewSnapshotTest {
     private companion object {
         val NAMES = listOf("idle", "start", "walking", "turn", "bus_stop_live", "bus_riding", "subway_live", "arrived")
+        /** 화면 시각 고정: 2026-11-04 14:00 KST (도착 예정 시각이 매번 같게) */
+        const val T0 = 1_793_768_400_000L
+        init { java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Seoul")) }
+
+        fun stateUpto(f: JSONObject, upto: Int): HudState {
+            val msgs = f.getJSONArray("messages")
+            var state = HudState()
+            for (i in 0 until upto) state = state.apply(msgs.getJSONObject(i), T0)
+            return state
+        }
     }
 
     @get:Rule
@@ -33,8 +43,24 @@ class HudViewSnapshotTest {
     fun menu() {
         val v = HudView(paparazzi.context) { null }
         v.device = HudView.Device(battery = 64, network = "Wi-Fi", server = true)
-        v.menu = HudView.Menu(listOf("길안내 화면으로", "업데이트 확인", "앱 종료"), selected = 1, note = "새 버전 0.3.1 · 탭하면 설치")
+        v.update = "0.3.3"
+        v.menu = HudView.Menu(
+            listOf("길안내 화면으로", "안내 종료", "여기서 경로 다시 찾기", "방향 다시 맞추기", "지도: 자동", "업데이트 설치 (0.3.3)", "앱 종료"),
+            selected = 4, note = "회전까지 80m 넘게 남으면 흐리게",
+        )
         paparazzi.snapshot(v, "09_menu")
+    }
+
+    /** 폰 위치가 1분 넘게 안 옴 + 지도 끄기 + 새 버전 표시 */
+    @Test
+    fun staleLocationTextOnly() {
+        val v = HudView(paparazzi.context) { null }
+        v.clock = { T0 + 75_000 }
+        v.state = stateUpto(fixture(), fixture().getJSONArray("checkpoints").getJSONObject(2).getInt("upto"))
+        v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
+        v.update = "0.3.3"
+        v.mapMode = HudView.MapMode.OFF
+        paparazzi.snapshot(v, "10_stale_location_text_only")
     }
 
     /** R08 Access Bridge 용: 클릭·포커스 가능, 접근성 스크롤 앞/뒤·클릭이 다음·이전·선택으로 */
@@ -62,14 +88,12 @@ class HudViewSnapshotTest {
     @Test
     fun transitFlow() {
         val f = fixture()
-        val msgs = f.getJSONArray("messages")
         val cps = f.getJSONArray("checkpoints")
         for (c in 0 until cps.length()) {
             val cp = cps.getJSONObject(c)
-            var state = HudState()
-            for (i in 0 until cp.getInt("upto")) state = state.apply(msgs.getJSONObject(i))
             val v = HudView(paparazzi.context) { null }
-            v.state = state
+            v.clock = { T0 + 5_000 }
+            v.state = stateUpto(f, cp.getInt("upto"))
             v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
             // 파일 이름은 영문 (한글은 깨짐). 라벨은 flow.json 의 checkpoints 순서와 같다
             paparazzi.snapshot(v, "%02d_%s".format(c + 1, NAMES.getOrElse(c) { "step" }))
@@ -87,12 +111,10 @@ class HudViewSnapshotTest {
         @Test
         fun fitsInside() {
             val f = JSONObject(javaClass.classLoader!!.getResource("flow.json")!!.readText())
-            val msgs = f.getJSONArray("messages")
             val upto = f.getJSONArray("checkpoints").getJSONObject(4).getInt("upto")
-            var state = HudState()
-            for (i in 0 until upto) state = state.apply(msgs.getJSONObject(i))
             val hud = HudView(paparazzi.context) { null }
-            hud.state = state
+            hud.clock = { T0 + 5_000 }
+            hud.state = stateUpto(f, upto)
             hud.device = HudView.Device(battery = 12, charging = false, network = "Wi-Fi", server = false)
             val root = android.widget.FrameLayout(paparazzi.context).apply { setBackgroundColor(android.graphics.Color.BLACK) }
             root.addView(hud, android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL))

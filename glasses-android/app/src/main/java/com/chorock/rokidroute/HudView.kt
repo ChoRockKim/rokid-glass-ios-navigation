@@ -89,6 +89,22 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     var menu: Menu? = null
         set(value) { field = value; invalidate() }
 
+    /** 지도 표시: 자동(회전까지 멀거나 타고 가는 중이면 도로·건물을 흐리게) / 항상 / 끄기(글자만) */
+    enum class MapMode(val label: String) { AUTO("자동"), ALWAYS("항상"), OFF("끄기") }
+    var mapMode = MapMode.AUTO
+        set(value) { field = value; invalidate() }
+
+    /** 서버에 올라온 새 버전 이름 (오른쪽 아래 작은 표시). 없으면 null */
+    var update: String? = null
+        set(value) { field = value; invalidate() }
+
+    /** 잠깐 보여 줄 알림 (왼쪽 아래). 예: "다시 찾음 · 320m" */
+    var notice: String? = null
+        set(value) { field = value; invalidate() }
+
+    /** 시계 (테스트에서 바꿈) */
+    var clock: () -> Long = System::currentTimeMillis
+
     /** 실기 확인용 한 줄 (왼쪽 아래) */
     var debug: String? = null
         set(value) { field = value; invalidate() }
@@ -125,6 +141,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     private val bldgLine = stroke(road, 0.7f, 90)
     private val routePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = green; alpha = 140; strokeWidth = 4f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
     private val ridePaint = Paint(routePaint).apply { strokeWidth = 4.5f; pathEffect = DashPathEffect(floatArrayOf(2f, 7f), 0f) }
+    private val updatePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = green; textSize = 12f; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
     private val markStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = green; strokeWidth = 2f }
     private val meFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = green }
 
@@ -135,6 +152,13 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         private const val CY = 205f
         private const val K = 0.75f
         private const val GLIDE_MS = 1500L
+        /** 자동 모드: 다음 회전까지 이보다 멀면 도로·건물을 흐리게 */
+        const val FAINT_FROM_M = 80.0
+        /** 실제 위치를 이보다 오래 못 받으면 "위치 N초 전" 표시 */
+        const val STALE_MS = 30_000L
+
+        fun ageText(ms: Long): String = if (ms < 60_000) "${ms / 1000}초 전" else "${ms / 60_000}분 전"
+        fun clockText(epochMs: Long): String = java.text.SimpleDateFormat("HH:mm", java.util.Locale.KOREA).format(java.util.Date(epochMs))
     }
 
     /** 논리 단위 → 실제 픽셀 배율 (가로 480px 화면이면 1) */
@@ -187,14 +211,17 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
             return
         }
 
+        val s = state
+        val now = clock()
         val pos = shownPos()
         val sensor = headingProvider()
-        if (pos != null && pairCode == null) drawMap(canvas, pos, sensor ?: pos.heading, sensor != null)
+        val faint = mapMode == MapMode.AUTO && !s.warn && (s.riding || (s.remaining ?: 0.0) > FAINT_FROM_M)
+        if (pos != null && pairCode == null && mapMode != MapMode.OFF) drawMap(canvas, pos, sensor ?: pos.heading, sensor != null, faint)
 
-        // 위 줄
-        val s = state
+        // 위 줄: 진행 · 도착 예정 시각 / 목적지
         if (pairCode == null) {
-            canvas.drawText(s.progress, 18f, 14f + 13f, small)
+            val top = if (s.progress.isNotEmpty() && s.etaAt != null) "${s.progress} · ${clockText(s.etaAt)} 도착" else s.progress
+            canvas.drawText(top, 18f, 14f + 13f, small)
             canvas.drawText(s.destination, W - 18f - small.measureText(s.destination), 14f + 13f, small)
         }
 
@@ -209,26 +236,39 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
 
         // 아래 줄
         val bottom = H - 10f
-        val left = debug ?: if (s.roads != null && pairCode == null) "© OpenStreetMap" else ""
-        canvas.drawText(left, 18f, bottom, tiny)
+        // 왼쪽 아래: 알림 > 위치 끊김 > 출처. 위치 끊김은 길안내 중에만 (폰 Overland 가 멈췄는지 알 수 있게)
+        val navigating = pairCode == null && s.progress.isNotEmpty()
+        val stale = when {
+            !navigating -> null
+            s.lastFixAt == null -> "위치 없음"
+            now - s.lastFixAt > STALE_MS -> "위치 ${ageText(now - s.lastFixAt)}"
+            else -> null
+        }
+        val left = debug ?: notice ?: stale
+        if (left != null) canvas.drawText(left, 18f, bottom, if (debug == null) small else tiny)
+        else if (s.roads != null && pairCode == null && mapMode != MapMode.OFF) canvas.drawText("© OpenStreetMap", 18f, bottom, tiny)
         drawDeviceStatus(canvas, bottom, s.status)
         canvas.restore()
 
-        // 위치가 미끄러지는 중이거나 센서 방향을 쓰면 계속 다시 그림
-        if (glideFrom != null || (sensor != null && pos != null)) postInvalidateOnAnimation()
+        // 위치가 미끄러지는 중이거나 센서 방향을 쓰면 계속 다시 그림. 길안내 중이면 1초마다 (위치 경과 시간 갱신)
+        if (glideFrom != null || (sensor != null && pos != null && mapMode != MapMode.OFF)) postInvalidateOnAnimation()
+        else if (navigating) postInvalidateDelayed(1000)
     }
 
     /** 메인 화면: 제목·버전, 항목(선택된 것만 밝게, ▶ 표시), 아래 안내 문구 */
     private fun drawMenu(canvas: Canvas, m: Menu) {
         canvas.drawText("길안내 · v${BuildConfig.VERSION_NAME}", 18f, 14f + 13f, small)
-        var y = 14f + 18f + 22f + 8f
+        // 항목이 7개라 안내 글씨(17)로 27 간격. 선택한 것만 굵고 밝게
+        var y = 14f + 13f + 31f
         m.items.forEachIndexed { i, item ->
             val sel = i == m.selected
-            big.color = if (sel) green else dim
-            canvas.drawText((if (sel) "▶ " else "   ") + item, 18f, y, big)
-            y += 38f
+            mid.color = if (sel) green else dim
+            mid.typeface = if (sel) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+            canvas.drawText((if (sel) "▶ " else "   ") + item, 18f, y, mid)
+            y += 27f
         }
-        if (m.note.isNotEmpty()) drawWrapped(canvas, m.note, mid.apply { color = green }, y - 12f, 2)
+        mid.typeface = Typeface.DEFAULT
+        if (m.note.isNotEmpty()) drawWrapped(canvas, m.note, small.let { TextPaint(it).apply { color = green; textSize = 15f } }, y - 14f, 1)
         val bottom = H - 10f
         canvas.drawText("쓸기 이동 · 탭 선택 · 뒤로 닫기", 18f, bottom, tiny)
         drawDeviceStatus(canvas, bottom, "")
@@ -238,6 +278,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     private fun drawDeviceStatus(canvas: Canvas, baseline: Float, status: String) {
         var x = W - 18f
         val dv = device
+        // 오른쪽 끝부터: 배터리 → 네트워크 → 새 버전 → 연결 오류
         // 배터리: 테두리 + 남은 만큼 채움 + 꼭지, 오른쪽에 %
         dv.battery?.let { pct ->
             val label = "$pct%" + if (dv.charging) "+" else ""
@@ -261,6 +302,12 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
             canvas.drawText(label, x, baseline, tiny)
             x -= 8f
         }
+        update?.let {
+            val label = "새 버전 $it"
+            x -= updatePaint.measureText(label)
+            canvas.drawText(label, x, baseline, updatePaint)
+            x -= 8f
+        }
         if (status.isNotEmpty()) canvas.drawText(status, x - tiny.measureText(status), baseline, tiny)
     }
 
@@ -278,7 +325,8 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         return layout.height.toFloat()
     }
 
-    private fun drawMap(canvas: Canvas, pos: MapPos, heading: Float, fromSensor: Boolean) {
+    /** faint: 도로·건물을 흐리게 (경로선·내 위치는 그대로) */
+    private fun drawMap(canvas: Canvas, pos: MapPos, heading: Float, fromSensor: Boolean, faint: Boolean = false) {
         val lat0 = Math.toRadians(pos.lat)
         val kx = cos(lat0) * 111_320
         val ky = 110_540.0
@@ -300,6 +348,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         canvas.save()
         canvas.clipRect(1f, 1f, W - 1f, H - 1f)
         state.roads?.let { r ->
+            if (faint) canvas.saveLayerAlpha(0f, 0f, W, H, 70)
             for (b in r.buildings) canvas.drawPath(path(b).apply { close() }, bldgLine)
             val kinds = r.kinds.ifEmpty { r.major.map { if (it) "major" else "road" } }
             val paths = r.lines.map { path(it) }
@@ -310,6 +359,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
             for ((k, b) in bands) each(k, b.fill)
             each("path", lineStyle.getValue("path"))
             each("rail", lineStyle.getValue("rail"))
+            if (faint) canvas.restore()
         }
         state.route?.let { r ->
             for (seg in r.segments) canvas.drawPath(path(seg.points), if (seg.kind == "walk") routePaint else ridePaint)
