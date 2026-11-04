@@ -51,4 +51,27 @@ class HudViewSnapshotTest {
             paparazzi.snapshot(v, "%02d_%s".format(c + 1, NAMES.getOrElse(c) { "step" }))
         }
     }
+
+    /** 안경과 같은 조건: 480x640 px 세로 화면, 밀도 1.5 (다른 Rokid 앱 테스트가 480x640 을 가정). 앱과 같은 레이아웃 */
+    class OnGlassesScreen {
+        @get:Rule
+        val paparazzi = Paparazzi(
+            deviceConfig = DeviceConfig.PIXEL_5.copy(screenWidth = 480, screenHeight = 640, xdpi = 240, ydpi = 240, density = Density.HIGH, orientation = ScreenOrientation.PORTRAIT),
+            theme = "android:Theme.Black.NoTitleBar.Fullscreen",
+        )
+
+        @Test
+        fun fitsInside() {
+            val f = JSONObject(javaClass.classLoader!!.getResource("flow.json")!!.readText())
+            val msgs = f.getJSONArray("messages")
+            val upto = f.getJSONArray("checkpoints").getJSONObject(4).getInt("upto")
+            var state = HudState()
+            for (i in 0 until upto) state = state.apply(msgs.getJSONObject(i))
+            val hud = HudView(paparazzi.context) { null }
+            hud.state = state
+            val root = android.widget.FrameLayout(paparazzi.context).apply { setBackgroundColor(android.graphics.Color.BLACK) }
+            root.addView(hud, android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL))
+            paparazzi.snapshot(root, "glasses_480x640_hdpi")
+        }
+    }
 }

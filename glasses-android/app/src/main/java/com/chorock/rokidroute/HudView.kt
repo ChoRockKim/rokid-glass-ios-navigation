@@ -18,7 +18,8 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * 안경 화면. 480x282 dp 고정 크기에 그린다 (서버의 /viewer 와 같은 배치).
+ * 안경 화면. 480x282 논리 단위로 그리고, 실제 화면에 비율을 유지한 채 가장 크게 들어가도록 줄인다.
+ * (0.2.0 까지는 480x282 dp 로 고정해 밀도>1 인 안경에서 화면 밖으로 넘쳤다. 다른 Rokid 앱들은 화면을 480x640 px 로 가정)
  * - 배경은 칠하지 않는다 (투과형 안경에서 검정 = 안 보임). 얇은 테두리만.
  * - 미니맵: 나는 (240, 205), 1m = 0.75dp. [headingProvider] 가 방위를 주면 그 방향이 위, 아니면 경로 진행 방향이 위.
  */
@@ -32,6 +33,10 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         }
 
     var pairCode: String? = null
+        set(value) { field = value; invalidate() }
+
+    /** 실기 확인용 한 줄 (왼쪽 아래) */
+    var debug: String? = null
         set(value) { field = value; invalidate() }
 
     private val green = Color.parseColor("#00ff66")
@@ -58,9 +63,15 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         private const val GLIDE_MS = 1500L
     }
 
+    /** 논리 단위 → 실제 픽셀 배율 (가로 480px 화면이면 1) */
+    private var k = 1f
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val d = resources.displayMetrics.density
-        setMeasuredDimension((W * d).toInt(), (H * d).toInt())
+        val dm = resources.displayMetrics
+        val availW = MeasureSpec.getSize(widthMeasureSpec).takeIf { it > 0 } ?: dm.widthPixels
+        val availH = MeasureSpec.getSize(heightMeasureSpec).takeIf { it > 0 } ?: dm.heightPixels
+        k = minOf(availW / W, availH / H)
+        setMeasuredDimension((W * k).toInt(), (H * k).toInt())
     }
 
     // ── 위치를 부드럽게 이어 그리기 ──
@@ -92,9 +103,8 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     }
 
     override fun onDraw(canvas: Canvas) {
-        val d = resources.displayMetrics.density
         canvas.save()
-        canvas.scale(d, d)
+        canvas.scale(k, k)
         canvas.drawRoundRect(RectF(0.5f, 0.5f, W - 0.5f, H - 0.5f), 12f, 12f, border)
 
         val pos = shownPos()
@@ -119,7 +129,8 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
 
         // 아래 줄
         val bottom = H - 10f
-        if (s.roads != null && pairCode == null) canvas.drawText("© OpenStreetMap", 18f, bottom, tiny)
+        val left = debug ?: if (s.roads != null && pairCode == null) "© OpenStreetMap" else ""
+        canvas.drawText(left, 18f, bottom, tiny)
         canvas.drawText(s.status, W - 18f - tiny.measureText(s.status), bottom, tiny)
         canvas.restore()
 

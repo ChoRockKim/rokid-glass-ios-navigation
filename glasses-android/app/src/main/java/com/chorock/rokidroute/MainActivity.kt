@@ -56,7 +56,12 @@ class MainActivity : Activity() {
             onStatus = { hud.state = hud.state.copy(status = it) },
             onPairCode = { hud.pairCode = it },
         )
-        Log.i("Route", "server=${BuildConfig.SERVER_BASE} heading=${heading.mode}")
+        val dm = resources.displayMetrics
+        val screen = "${dm.widthPixels}x${dm.heightPixels} d${dm.density}"
+        Log.i("Route", "server=${BuildConfig.SERVER_BASE} heading=${heading.mode} screen=$screen")
+        // 화면 크기·센서 모드를 처음 10초 왼쪽 아래에 보여 준다 (실기 확인용)
+        hud.debug = "화면 $screen · 방향 ${heading.mode}"
+        hud.postDelayed({ hud.debug = null }, 10_000)
     }
 
     override fun onResume() {
