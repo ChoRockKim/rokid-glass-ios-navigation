@@ -1,5 +1,5 @@
-// 브라우저용 안경 화면 미리보기. GET /viewer
-// 안경 앱과 같은 WebSocket(/glass)에 붙어 같은 메시지를 480x352 화면으로 보여 준다.
+// 브라우저용 안경 화면 미리보기. GET /viewer (화면 480x282 dp)
+// 안경 앱과 같은 WebSocket(/glass)에 붙어 같은 메시지를 480x282 화면으로 보여 준다.
 // 토큰은 페이지에서 입력받아 그 브라우저 localStorage 에만 저장한다 (서버 코드·저장소에 없음).
 export const VIEWER_HTML = `<!doctype html>
 <html lang="ko">
@@ -12,11 +12,10 @@ export const VIEWER_HTML = `<!doctype html>
   * { box-sizing: border-box; }
   html, body { margin: 0; background: var(--bg); color: var(--g); font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
   main { max-width: 520px; margin: 0 auto; padding: 16px; }
-  /* 안경 화면은 480x352 dp. 안내는 아래쪽 480x282 띠에만 그리고 위 70 은 비운다 (앞을 가리지 않게) */
+  /* 안경 화면: 480x282 dp */
   .stage-wrap { position: relative; width: 100%; overflow: hidden; border-radius: 14px; box-shadow: 0 0 0 1px #133, 0 8px 30px #0008; }
-  .stage { position: absolute; left: 0; top: 0; width: 480px; height: 352px; transform-origin: top left; background: #000; }
-  .free { position: absolute; left: 0; top: 0; width: 480px; height: 70px; background: repeating-linear-gradient(45deg, #050805, #050805 8px, #000 8px, #000 16px); color: #1d3a26; font-size: 13px; display: flex; align-items: center; justify-content: center; }
-  .glass { position: absolute; left: 0; bottom: 0; width: 480px; height: 282px; padding: 14px 18px; overflow: hidden; }
+  .stage { position: absolute; left: 0; top: 0; width: 480px; height: 282px; transform-origin: top left; background: #000; }
+  .glass { position: absolute; left: 0; top: 0; width: 480px; height: 282px; padding: 14px 18px; overflow: hidden; }
   .top, .bottom { display: flex; justify-content: space-between; font-size: 16px; height: 22px; color: var(--dim); }
   .bottom { position: absolute; left: 18px; right: 18px; bottom: 10px; font-size: 14px; height: 18px; }
   .line1 { margin-top: 18px; font-size: 30px; line-height: 38px; max-height: 76px; overflow: hidden; font-weight: 700; word-break: keep-all; }
@@ -36,7 +35,6 @@ export const VIEWER_HTML = `<!doctype html>
 <main>
   <div id="wrap" class="stage-wrap">
     <div id="stage" class="stage">
-      <div class="free">시야 (비움 · 480×70)</div>
       <div id="glass" class="glass idle">
         <div class="top"><span id="progress"></span><span id="dest"></span></div>
         <div id="line1" class="line1">연결 전</div>
@@ -64,8 +62,8 @@ export const VIEWER_HTML = `<!doctype html>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  // 480x352 dp 화면을 그대로 그리고 폭에 맞춰 통째로 축소/확대 (줄바꿈이 안경과 같게)
-  const fit = () => { const w = $('wrap').clientWidth; const k = w / 480; $('stage').style.transform = 'scale(' + k + ')'; $('wrap').style.height = (352 * k) + 'px'; };
+  // 480x282 dp 화면을 그대로 그리고 폭에 맞춰 통째로 축소/확대 (줄바꿈이 안경과 같게)
+  const fit = () => { const w = $('wrap').clientWidth; const k = w / 480; $('stage').style.transform = 'scale(' + k + ')'; $('wrap').style.height = (282 * k) + 'px'; };
   window.addEventListener('resize', fit); fit();
   const KEY = 'glassToken';
   let ws = null, wait = 2000, timer = null, watchId = null, lastSent = 0;

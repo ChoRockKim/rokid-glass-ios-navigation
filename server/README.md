@@ -75,7 +75,7 @@ API_TOKEN=... npx tsx scripts/simulate-walk.ts 37.5962 127.0633 왕십리역 20 
   ```
 - 안경 → 서버: `{"type":"next"}`, `{"type":"prev"}`, `{"type":"sync"}`
 - 헬스 체크: `GET /healthz`
-- **브라우저 미리보기: `GET /viewer`** — 안경과 같은 메시지를 480×352 화면으로 보여 주고, 다음/이전 버튼·키보드, (선택) 브라우저 위치 전송. 토큰은 페이지에서 입력해 그 브라우저 localStorage 에만 저장.
+- **브라우저 미리보기: `GET /viewer`** — 안경과 같은 메시지를 480×282 화면으로 보여 주고, 다음/이전 버튼·키보드, (선택) 브라우저 위치 전송. 토큰은 페이지에서 입력해 그 브라우저 localStorage 에만 저장.
 
 ## 프록시
 `HTTPS_PROXY` 가 있으면 카카오 fetch 와 Slack Socket Mode WebSocket 을 그 프록시로 보낸다 (`src/proxy.ts`). Node 기본 fetch 와 Slack WebSocket 은 프록시 환경 변수를 스스로 읽지 않는다.
