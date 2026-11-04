@@ -126,9 +126,31 @@ export const VIEWER_HTML = `<!doctype html>
     marks.appendChild(el('polygon', { points: cx + ',' + (cy - 11) + ' ' + (cx - 7) + ',' + (cy + 7) + ' ' + cx + ',' + (cy + 3) + ' ' + (cx + 7) + ',' + (cy + 7),
       fill: map.pos.snapped ? '#00ff66' : 'none', stroke: '#00ff66', 'stroke-width': 1.5 }));
   }
+  // 위치는 2~5초 간격으로 오므로, 이전 위치→새 위치를 부드럽게 이어 그린다 (방향은 가까운 쪽으로 회전)
+  let anim = null;
+  const GLIDE_MAX_MS = 1500;
+  function glide(target) {
+    const from = map.pos;
+    // 처음이거나 너무 멀리(150m+) 뛰면(단계 넘김 등) 바로 옮긴다
+    if (!from || Math.abs(target.lat - from.lat) * 110540 + Math.abs(target.lon - from.lon) * 88000 > 150) {
+      anim = null; map.pos = target; redraw(); return;
+    }
+    let dh = ((target.heading - from.heading + 540) % 360) - 180;
+    anim = { from: { ...from }, to: target, dh, t0: performance.now(), dur: GLIDE_MAX_MS };
+    step();
+  }
+  function step() {
+    if (!anim) return;
+    const k = Math.min(1, (performance.now() - anim.t0) / anim.dur);
+    const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+    const f = anim.from, t = anim.to;
+    map.pos = { ...t, lon: f.lon + (t.lon - f.lon) * e, lat: f.lat + (t.lat - f.lat) * e, heading: (f.heading + anim.dh * e + 360) % 360 };
+    drawMap();
+    if (k < 1) requestAnimationFrame(step); else { map.pos = t; anim = null; }
+  }
   const onMapMsg = (m) => {
-    if (m.type === 'map-route') { map.route = m; map.roads = map.roads; }
-    else if (m.type === 'map-pos') map.pos = m;
+    if (m.type === 'map-route') { map.route = m; anim = null; }
+    else if (m.type === 'map-pos') { glide(m); return true; }
     else if (m.type === 'map-roads') map.roads = m;
     else return false;
     redraw(); return true;
