@@ -4,6 +4,7 @@ import { createApi } from "./api.js";
 import { RoadFeed } from "./roads.js";
 import { providersFromEnv, startRealtimePoller } from "./realtime.js";
 import { startSlack } from "./slack.js";
+import { Pairing } from "./pairing.js";
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -31,7 +32,7 @@ nav.onChange((m) => log(`nav -> ${m.type}${m.type === "step" ? ` ${m.index + 1}/
 let slack: Awaited<ReturnType<typeof startSlack>> | null = null;
 
 const api = API_TOKEN
-  ? createApi({ nav, apiToken: API_TOKEN, kakaoKey: KAKAO_REST_KEY, log, notify: (t) => slack?.notify(t) })
+  ? createApi({ nav, apiToken: API_TOKEN, kakaoKey: KAKAO_REST_KEY, log, notify: (t) => slack?.notify(t), pairing: new Pairing(GLASS_TOKEN) })
   : undefined;
 if (!api) log("API_TOKEN 이 없어 폰용 HTTP API(/location, /route, /nav, /status)를 끕니다");
 

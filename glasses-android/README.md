@@ -1,0 +1,47 @@
+# glasses-android (Rokid 안경용 APK)
+
+Kotlin 안드로이드 앱. 서버(`server/`)의 WebSocket `/glass?map=1` 에 붙어 안내 문구와 미니맵을 그린다. `/viewer`(웹)와 같은 화면을 안경에서 직접 띄우는 것.
+
+선택 근거: 공개된 Rokid 안경 앱 10개 중 8개가 Kotlin (Rokid 공식 `glass3_sdk_demo`, 지도 HUD `Anezium/Rokid-GMaps` 포함). 구성(minSdk 28, compileSdk 34, Kotlin 2.1, View+Canvas)은 Rokid-GMaps 를 따랐다. 통신은 OkHttp 4.12 (`Rokid_Claude` 와 같은 버전).
+
+## 화면
+- 480×282 dp 를 화면 아래 가운데에 그린다. 나머지는 검정(투과형 안경에서 안 보임).
+- 위: `3/14`, `→ 목적지` / 가운데: 안내 두 줄 / 배경: 미니맵(경로·주변 도로·다음 회전 ◆·나 ▲)
+- 처음 실행하면 **연결 코드 4자리**가 뜬다 (페어링).
+
+## 페어링 (토큰을 APK 에 넣지 않기 위해)
+1. 안경 앱을 켜면 `연결 코드 1234` 가 뜬다 (서버 `POST /pair/request`).
+2. 폰 단축어 **"안경 연결"** 로 그 코드를 보낸다 (`POST /pair/approve`, `API_TOKEN` 인증). 만드는 법은 `docs/ios-shortcuts.md`.
+3. 안경이 2초마다 확인하다가 승인되면 토큰을 받아 저장하고 연결한다. 다음부터는 바로 연결.
+   서버 `GLASS_TOKEN` 을 바꾸면 401 → 자동으로 다시 페어링.
+
+## 입력 (실기 미확인)
+| 키 | 동작 |
+|---|---|
+| ENTER, DPAD_CENTER (탭) | 다음 |
+| DPAD_RIGHT, DPAD_DOWN | 다음 |
+| DPAD_LEFT, DPAD_UP | 이전 |
+| BACK (더블탭) | 앱 기본 동작 |
+
+`Rokid_Claude` 주석 기준 탭=ENTER, 쓸기=DPAD_LEFT/RIGHT. 어느 쓸기 방향이 앞인지는 실기에서 확인.
+
+## 방향 (미니맵 회전)
+- `TYPE_ROTATION_VECTOR`(지자기 포함)가 있으면 북 기준 방위 → **보고 있는 방향이 위**.
+- 없으면 `TYPE_GAME_ROTATION_VECTOR`(상대 각도)로 고개 회전을 따라가고, 경로 위를 걷는 동안 경로 진행 방향으로 0°를 10%씩 보정.
+- 둘 다 없으면 경로 진행 방향이 위 (`/viewer` 와 같음).
+- Rokid 공식 예제는 GAME_ROTATION_VECTOR 를 쓰고 지자기 유무를 로그로만 확인한다 → 어느 모드가 될지는 실기 로그(`adb logcat -s Heading Route`)로 확인.
+
+## 빌드
+```bash
+cd glasses-android
+echo "sdk.dir=/path/to/android-sdk" > local.properties   # platforms;android-34, build-tools;34.0.0
+./gradlew assembleDebug                                   # → app/build/outputs/apk/debug/app-debug.apk
+```
+서버 주소를 바꾸려면 `./gradlew assembleDebug -PROUTE_SERVER=https://…`.
+2026-11-04 클라우드 세션에서 빌드 성공 (3.5MB, 디버그 서명). Maven Central 이 429 를 줄 때는 Google 미러(`maven-central.storage-download.googleapis.com/maven2`)로 바꿔 빌드했다 (세션 전용 init 스크립트, 저장소 설정은 그대로).
+
+디버그 키는 빌드 환경마다 달라서, 다른 곳에서 빌드한 APK 로 덮어 설치하면 서명 불일치로 실패할 수 있다 → 기존 앱을 지우고 설치.
+
+## 확인 상태
+- 빌드, APK 패키지 정보·서명: 확인
+- 안경 실기 (화면 크기·위치, 키 코드, 센서 모드, 네트워크): **미확인**

@@ -1,0 +1,188 @@
+package com.chorock.rokidroute
+
+import android.content.Context
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.DashPathEffect
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+import android.graphics.Typeface
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
+import android.text.TextUtils
+import android.view.View
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
+
+/**
+ * 안경 화면. 480x282 dp 고정 크기에 그린다 (서버의 /viewer 와 같은 배치).
+ * - 배경은 칠하지 않는다 (투과형 안경에서 검정 = 안 보임). 얇은 테두리만.
+ * - 미니맵: 나는 (240, 205), 1m = 0.75dp. [headingProvider] 가 방위를 주면 그 방향이 위, 아니면 경로 진행 방향이 위.
+ */
+class HudView(context: Context, private val headingProvider: () -> Float?) : View(context) {
+    var state = HudState()
+        set(value) {
+            val old = field.pos
+            field = value
+            if (value.pos != null && value.pos != old) startGlide(old, value.pos)
+            invalidate()
+        }
+
+    var pairCode: String? = null
+        set(value) { field = value; invalidate() }
+
+    private val green = Color.parseColor("#00ff66")
+    private val dim = Color.parseColor("#4da86c")
+    private val road = Color.parseColor("#2b7a45")
+
+    private val border = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1f; color = dim }
+    private val small = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = dim; textSize = 13f; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
+    private val tiny = TextPaint(small).apply { textSize = 12f }
+    private val big = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = green; textSize = 22f; typeface = Typeface.DEFAULT_BOLD; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
+    private val mid = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = green; textSize = 17f; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
+    private val roadPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = road; alpha = 140; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
+    private val routePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = green; alpha = 140; strokeWidth = 4f; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
+    private val ridePaint = Paint(routePaint).apply { strokeWidth = 4.5f; pathEffect = DashPathEffect(floatArrayOf(2f, 7f), 0f) }
+    private val markStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = green; strokeWidth = 2f }
+    private val meFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = green }
+
+    companion object {
+        const val W = 480f
+        const val H = 282f
+        private const val CX = 240f
+        private const val CY = 205f
+        private const val K = 0.75f
+        private const val GLIDE_MS = 1500L
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val d = resources.displayMetrics.density
+        setMeasuredDimension((W * d).toInt(), (H * d).toInt())
+    }
+
+    // ── 위치를 부드럽게 이어 그리기 ──
+    private var glideFrom: MapPos? = null
+    private var glideTo: MapPos? = null
+    private var glideStart = 0L
+
+    private fun startGlide(from: MapPos?, to: MapPos) {
+        if (from == null || abs(to.lat - from.lat) * 110_540 + abs(to.lon - from.lon) * 88_000 > 150) {
+            glideFrom = null; glideTo = to; return
+        }
+        glideFrom = shownPos() ?: from
+        glideTo = to
+        glideStart = System.currentTimeMillis()
+    }
+
+    private fun shownPos(): MapPos? {
+        val to = glideTo ?: return state.pos
+        val from = glideFrom ?: return to
+        val k = ((System.currentTimeMillis() - glideStart).toFloat() / GLIDE_MS).coerceIn(0f, 1f)
+        val e = if (k < 0.5f) 2 * k * k else 1 - (-2 * k + 2) * (-2 * k + 2) / 2
+        val dh = ((to.heading - from.heading + 540f) % 360f) - 180f
+        if (k >= 1f) glideFrom = null
+        return to.copy(
+            lon = from.lon + (to.lon - from.lon) * e,
+            lat = from.lat + (to.lat - from.lat) * e,
+            heading = (from.heading + dh * e + 360f) % 360f,
+        )
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val d = resources.displayMetrics.density
+        canvas.save()
+        canvas.scale(d, d)
+        canvas.drawRoundRect(RectF(0.5f, 0.5f, W - 0.5f, H - 0.5f), 12f, 12f, border)
+
+        val pos = shownPos()
+        val sensor = headingProvider()
+        if (pos != null && pairCode == null) drawMap(canvas, pos, sensor ?: pos.heading, sensor != null)
+
+        // 위 줄
+        val s = state
+        if (pairCode == null) {
+            canvas.drawText(s.progress, 18f, 14f + 13f, small)
+            canvas.drawText(s.destination, W - 18f - small.measureText(s.destination), 14f + 13f, small)
+        }
+
+        // 안내 두 줄
+        val line1 = pairCode?.let { "연결 코드 $it" } ?: s.line1
+        val line2 = if (pairCode != null) "폰 단축어 \"안경 연결\"에 입력" else s.line2
+        big.color = if (s.warn && pairCode == null) Color.WHITE else if (s.idle && pairCode == null) dim else green
+        mid.color = if (s.idle && pairCode == null) dim else green
+        var y = 14f + 18f + 14f
+        y += drawWrapped(canvas, line1, big, y, 2) + 6f
+        drawWrapped(canvas, line2, mid, y, 2)
+
+        // 아래 줄
+        val bottom = H - 10f
+        if (s.roads != null && pairCode == null) canvas.drawText("© OpenStreetMap", 18f, bottom, tiny)
+        canvas.drawText(s.status, W - 18f - tiny.measureText(s.status), bottom, tiny)
+        canvas.restore()
+
+        // 위치가 미끄러지는 중이거나 센서 방향을 쓰면 계속 다시 그림
+        if (glideFrom != null || (sensor != null && pos != null)) postInvalidateOnAnimation()
+    }
+
+    private fun drawWrapped(canvas: Canvas, text: String, paint: TextPaint, top: Float, maxLines: Int): Float {
+        if (text.isEmpty()) return 0f
+        val layout = StaticLayout.Builder.obtain(text, 0, text.length, paint, (W - 36f).toInt())
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setMaxLines(maxLines)
+            .setEllipsize(TextUtils.TruncateAt.END)
+            .build()
+        canvas.save()
+        canvas.translate(18f, top)
+        layout.draw(canvas)
+        canvas.restore()
+        return layout.height.toFloat()
+    }
+
+    private fun drawMap(canvas: Canvas, pos: MapPos, heading: Float, fromSensor: Boolean) {
+        val lat0 = Math.toRadians(pos.lat)
+        val kx = cos(lat0) * 111_320
+        val ky = 110_540.0
+        val h = Math.toRadians(heading.toDouble())
+        val c = cos(h); val sn = sin(h)
+        fun px(p: DoubleArray): Pair<Float, Float> {
+            val dx = (p[0] - pos.lon) * kx
+            val dy = (p[1] - pos.lat) * ky
+            val x = dx * c - dy * sn
+            val yy = dx * sn + dy * c
+            return Pair((CX + x * K).toFloat(), (CY - yy * K).toFloat())
+        }
+        fun path(points: List<DoubleArray>): Path {
+            val p = Path()
+            points.forEachIndexed { i, pt -> val (x, y) = px(pt); if (i == 0) p.moveTo(x, y) else p.lineTo(x, y) }
+            return p
+        }
+
+        canvas.save()
+        canvas.clipRect(1f, 1f, W - 1f, H - 1f)
+        state.roads?.let { r ->
+            r.lines.forEachIndexed { i, line ->
+                roadPaint.strokeWidth = if (r.major.getOrElse(i) { false }) 2.2f else 1f
+                canvas.drawPath(path(line), roadPaint)
+            }
+        }
+        state.route?.let { r ->
+            for (seg in r.segments) canvas.drawPath(path(seg.points), if (seg.kind == "walk") routePaint else ridePaint)
+            val n = pos.next
+            if (n != null && n < r.turns.size) {
+                val (x, y) = px(r.turns[n])
+                canvas.save(); canvas.rotate(45f, x, y)
+                canvas.drawRect(x - 5f, y - 5f, x + 5f, y + 5f, markStroke)
+                canvas.restore()
+            }
+        }
+        // 나: 위를 향한 삼각형. 경로를 벗어났으면 속이 빈 삼각형
+        val me = Path().apply {
+            moveTo(CX, CY - 11f); lineTo(CX - 7f, CY + 7f); lineTo(CX, CY + 3f); lineTo(CX + 7f, CY + 7f); close()
+        }
+        canvas.drawPath(me, if (pos.snapped) meFill else markStroke)
+        canvas.restore()
+    }
+}

@@ -39,6 +39,11 @@
 ### 3) 다음 / 종료 (뒷면 탭 3번 등)
 - **URL 내용 가져오기**: `SERVER/nav?token=TOKEN`, POST, JSON `action` = `next` 또는 `stop`
 
+### 4) 안경 연결 (안경 앱 처음 한 번)
+1. **입력 요청**: 유형 **숫자**, 질문 `안경 연결 코드`
+2. **URL 내용 가져오기**: `SERVER/pair/approve?token=TOKEN`, POST, JSON `code` = (1의 결과, 텍스트로)
+3. **사전 값 가져오기**: 키 `speech` → **텍스트 말하기** ("안경을 연결했습니다." 또는 "코드를 찾지 못했습니다.")
+
 ## 서버 응답 예 (`POST /route`, curl 로 확인)
 ```json
 {"active":true,"from":"현재 위치","to":"왕십리역 2호선","distance":5378,"minutes":86,"total":14,

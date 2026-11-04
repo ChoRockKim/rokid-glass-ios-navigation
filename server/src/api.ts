@@ -19,6 +19,7 @@ import { formatDistance } from "./guide.js";
 import { planRoute, type PlaceInput } from "./planner.js";
 import { pendingTransit, planTransit, selectTransit, speakOption, summarizeOption } from "./transit.js";
 import { safeEqual, tokenFrom } from "./auth.js";
+import type { Pairing } from "./pairing.js";
 
 const MAX_BODY = 5 * 1024 * 1024; // Overland 배치(최대 1000점) 여유
 /** 연속 이탈이 이만큼이면 현재 위치에서 재탐색 */
@@ -32,6 +33,8 @@ export interface ApiDeps {
   log: (m: string) => void;
   /** 경로 시작·재탐색 등을 Slack 으로 알리고 싶을 때 */
   notify?: (text: string) => void;
+  /** 안경 앱 페어링 (없으면 /pair/* 끔) */
+  pairing?: Pairing;
 }
 
 class HttpError extends Error {
@@ -98,7 +101,7 @@ export function parsePositions(body: unknown): Position[] | null {
 }
 
 export function createApi(deps: ApiDeps) {
-  const { nav, apiToken, kakaoKey, log, notify } = deps;
+  const { nav, apiToken, kakaoKey, log, notify, pairing } = deps;
   let lastReroute = 0;
   let rerouting = false;
 
@@ -151,7 +154,21 @@ export function createApi(deps: ApiDeps) {
   const handle = async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = new URL(req.url ?? "/", "http://localhost");
     const route = `${req.method} ${url.pathname}`;
-    if (!["POST /location", "POST /route", "POST /transit", "POST /transit/select", "POST /nav", "GET /status"].includes(route)) return false;
+    // 안경 페어링: 요청·상태 확인은 인증 없음 (안경에 아직 토큰이 없으므로). 승인은 아래에서 API_TOKEN 으로
+    if (pairing && route === "POST /pair/request") {
+      const r = pairing.request();
+      if (!r) send(res, 429, { error: "too many pending pair requests" });
+      else {
+        log(`pair request: code ${r.code}`);
+        send(res, 200, r);
+      }
+      return true;
+    }
+    if (pairing && route === "GET /pair/status") {
+      send(res, 200, pairing.status(url.searchParams.get("id") ?? ""));
+      return true;
+    }
+    if (!["POST /location", "POST /route", "POST /transit", "POST /transit/select", "POST /nav", "GET /status", "POST /pair/approve"].includes(route)) return false;
 
     const given = tokenFrom(req);
     if (!given || !safeEqual(given, apiToken)) {
@@ -254,6 +271,14 @@ export function createApi(deps: ApiDeps) {
         nav.start({ from: plan.from, to: plan.to, route: r, guide, mode: "transit", startedBy: "api" });
         notify?.(`:bus: *${summarizeOption(option, n - 1)}* (단축어에서 시작)`);
         send(res, 200, { ...summary(), speech: `${n}번 경로로 안내합니다. ${guide[0]?.line1.replace(/^\S+\s/, "") ?? ""}` });
+        return true;
+      }
+
+      if (route === "POST /pair/approve") {
+        const code = String((body as Record<string, unknown>).code ?? "").trim();
+        const ok = pairing?.approve(code) ?? false;
+        log(`pair approve ${code}: ${ok ? "ok" : "no match"}`);
+        send(res, ok ? 200 : 404, ok ? { ok: true, speech: "안경을 연결했습니다." } : { error: "코드가 없거나 만료됐습니다", speech: "코드를 찾지 못했습니다." });
         return true;
       }
 
