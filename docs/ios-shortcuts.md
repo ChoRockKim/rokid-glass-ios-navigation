@@ -1,0 +1,46 @@
+# iOS 기본 단축어로 서버 쓰기
+
+작성: 2026-11-04. **iPhone에서 직접 만들어 본 것은 아니다.** 서버 쪽은 같은 요청을 curl 로 보내 확인했다. Overland 앱이 제공하는 단축어 동작은 사용자 iPhone 에서 실행되지 않아서(원인 미확인) 쓰지 않는다.
+
+## 되는 것 / 안 되는 것
+| 용도 | 기본 단축어로 | 근거 |
+|---|---|---|
+| 길안내 시작 (현재 위치 → 목적지) | 됨 | `현재 위치 가져오기` + `URL 내용 가져오기`(POST, JSON 본문) |
+| 지금 위치로 단계 맞추기 (버튼 1번) | 됨 | 같은 조합으로 `/location` 에 1회 전송 |
+| 다음/종료 | 됨 | `/nav` POST |
+| **몇 초마다 자동 위치 전송** | **안 됨** | 개인용 자동화에 주기 트리거가 없다 (`evidence-ios-location.md` 5절). 반복+대기 루프는 화면이 꺼지면 대기가 몇 분으로 늘고 다른 앱으로 가면 종료될 수 있다 (같은 문서 7절) |
+
+연속 추적은 별도 앱(Overland 앱 화면에서 직접 켜기)으로 하고, 단축어는 시작·보정·종료 버튼으로 쓴다.
+
+## 주의 (커뮤니티 보고, 미검증)
+- **Siri 로 실행하면 위치 가져오기가 실패**한다는 보고가 여럿 있다 (단축어 앱·위젯에서는 됨). 동작 버튼·뒷면 탭·홈 화면 아이콘으로 실행할 것. https://forums.macrumors.com/threads/siri-shortcut-get-location-action-not-working-via-siri.2144921 , https://community.monzo.com/t/ios-shortcuts-formerly-workflow/47668
+- `URL 내용 가져오기`에서 직접 넣은 헤더가 적용되지 않았다는 보고가 있다. 그래서 서버는 `Authorization` 헤더 대신 `?token=` 도 받는다. JSON 본문은 Content-Type 헤더 없이도 파싱한다. https://discussions.apple.com/thread/251563782
+- 뒷면 탭: 설정 → 손쉬운 사용 → 터치 → 뒷면 탭 → 이중/삼중 탭에서 단축어 선택. iPhone 8 이상, iOS 14 이상. https://support.apple.com/111772
+
+## 만들 단축어
+아래 `SERVER` 는 배포한 서버 주소, `TOKEN` 은 서버의 `API_TOKEN` 값.
+
+### 1) 길안내 (동작 버튼 또는 홈 화면)
+1. **텍스트 받아쓰기** (또는 `입력 요청`) → 목적지
+2. **현재 위치 가져오기**
+3. **URL 내용 가져오기**
+   - URL: `SERVER/route?token=TOKEN`
+   - 방법: POST, 요청 본문: JSON
+   - `to` = (1의 결과), `lat` = (2의 위도), `lon` = (2의 경도)
+     위도·경도는 `위치 세부사항 가져오기`로 꺼내거나, 변수의 세부사항에서 위도/경도를 고른다.
+4. **사전 값 가져오기**: 키 `speech`
+5. **텍스트 말하기** (또는 `결과 보기`)
+
+### 2) 위치 맞추기 (뒷면 탭 2번)
+1. **현재 위치 가져오기**
+2. **URL 내용 가져오기**: `SERVER/location?token=TOKEN`, POST, JSON `lat`, `lon`
+   (선택) 응답의 `index` 로 몇 단계인지 알림
+
+### 3) 다음 / 종료 (뒷면 탭 3번 등)
+- **URL 내용 가져오기**: `SERVER/nav?token=TOKEN`, POST, JSON `action` = `next` 또는 `stop`
+
+## 서버 응답 예 (`POST /route`, curl 로 확인)
+```json
+{"active":true,"from":"현재 위치","to":"왕십리역 2호선","distance":5378,"minutes":86,"total":14,
+ "speech":"왕십리역 2호선까지 5.4km, 약 86분. 먼저 외국어대교차로까지 385m.", "steps":["● 출발 · 외국어대교차로까지 385m", "..."]}
+```

@@ -30,12 +30,37 @@ npx tsx scripts/smoke-kakao.ts 강남역 선릉역   # 카카오 실 API 확인
 
 Slack 앱 설정에 필요한 것: Socket Mode 켜기, App-Level Token(`connections:write`), 슬래시 커맨드 `/route`, 봇 스코프 `commands`.
 
+## 폰 HTTP API (`API_TOKEN` 이 있을 때만 켜짐)
+인증: `Authorization: Bearer <API_TOKEN>` 또는 `?token=`
+
+| 요청 | 본문 | 설명 |
+|---|---|---|
+| `POST /location` | Overland `{"locations":[GeoJSON…]}` / `{"lat","lon","acc"}` / OwnTracks | 위치 반영. 응답 `{"result":"ok", index, offset, offRoute…}` |
+| `POST /route` | `{"to":"왕십리역","lat":..,"lon":..}` 또는 `{"to","from"}` | 경로 시작. 출발지가 없으면 마지막 받은 위치. 응답에 `speech` |
+| `POST /nav` | `{"action":"next"\|"prev"\|"stop"}` | 수동 진행 |
+| `GET /status` | | 현재 상태와 단계 목록 |
+
+위치 추적 규칙 (`src/navigation.ts`):
+- 경로선에 투영해 진행 거리를 구하고, 다음 회전 지점 12m 안이면 다음 단계로 넘긴다.
+- 정확도 60m 초과, 이전보다 오래된 시각의 위치는 버린다.
+- 경로선에서 35m(또는 정확도×1.5) 넘게 떨어지면 이탈. 3번 연속이면 현재 위치에서 재탐색 (30초 간격 제한).
+- 수동 next/prev 후 60초 동안은 위치가 단계를 되돌리지 않는다.
+- 안경에는 단계·이탈이 바뀌거나 남은 거리가 10m 단위로 바뀔 때만 보낸다.
+
+단축어 만드는 법: `../docs/ios-shortcuts.md`
+
+```bash
+API_TOKEN=... npx tsx scripts/simulate-walk.ts 37.5962 127.0633 왕십리역 20       # 경로 따라 걷기
+API_TOKEN=... npx tsx scripts/simulate-walk.ts 37.5962 127.0633 왕십리역 20 600   # 600m 지점에서 이탈
+```
+
 ## 안경 WebSocket 프로토콜
 - 주소: `ws://HOST:PORT/glass`
 - 인증: `Authorization: Bearer <GLASS_TOKEN>` (헤더를 못 넣는 클라이언트는 `?token=`)
 - 서버 → 안경 (연결 직후 + 상태가 바뀔 때마다):
   ```json
-  {"type":"step","index":0,"total":11,"text":"강남역 1번 출구까지 역사 내 이동","distance":96,"destination":"선릉역"}
+  {"type":"step","index":1,"total":14,"turn":"left","line1":"← 외국어대교차로에서 좌회전","line2":"회기역앞교차로까지 662m · 이문로",
+   "text":"← 외국어대교차로에서 좌회전 · 회기역앞교차로까지 662m · 이문로","distance":795,"remaining":662,"offRoute":false,"destination":"왕십리역 2호선"}
   {"type":"arrived","destination":"선릉역","text":"도착: 선릉역"}
   {"type":"idle","text":"경로 없음 · Slack에서 /route"}
   ```
@@ -53,6 +78,9 @@ Slack 앱 설정에 필요한 것: Socket Mode 켜기, App-Level Token(`connecti
 | Slack Socket Mode 연결 | 확인 |
 | Slack `/route 외대앞역 > 왕십리역` → 카카오 32단계 → 안경 WS 1단계 push | 실제 Slack 에서 확인 |
 | `/route next` → 안경 WS 2단계 | 확인 |
+| 단계 병합·회전 방향 (외대앞→왕십리 32→14~15단계) | 실제 카카오 응답으로 확인 |
+| `/location` 자동 진행·남은 거리·이탈·재탐색 | 실제 경로 좌표로 만든 가짜 위치로 확인 (`simulate-walk.ts`). 실제 걸어 본 것 아님 |
+| 단축어, Overland 실기 | 미확인 (폰이 이 서버에 닿으려면 배포 필요) |
 | 안경 앱 연동 | 로컬 검증 필요 (안경) |
 
 클라우드 세션(프록시 환경)에서 돌릴 때 허용 도메인에 필요한 것: `dapi.kakao.com`, `slack.com`, `wss-primary.slack.com`, `hooks.slack.com`(슬래시 커맨드 응답).

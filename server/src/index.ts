@@ -1,7 +1,9 @@
 import bolt from "@slack/bolt";
-import { searchPlace, walkRoute, KakaoError } from "./kakao.js";
+import { KakaoError } from "./kakao.js";
 import { Navigator, parseRouteArgs, formatDistance, formatMinutes, messageFor } from "./navigation.js";
 import { startGlassServer } from "./glass.js";
+import { createApi } from "./api.js";
+import { planRoute, type PlaceInput } from "./planner.js";
 import { dispatcher, proxiedFetch } from "./proxy.js";
 
 const { App, LogLevel, SocketModeReceiver } = bolt;
@@ -20,6 +22,10 @@ const SLACK_BOT_TOKEN = requireEnv("SLACK_BOT_TOKEN");
 const SLACK_APP_TOKEN = requireEnv("SLACK_APP_TOKEN");
 const GLASS_TOKEN = requireEnv("GLASS_TOKEN");
 const PORT = Number(process.env.PORT ?? 8787);
+/** 폰(단축어, Overland)용 API 토큰. 없으면 API 를 끈다 */
+const API_TOKEN = process.env.API_TOKEN ?? "";
+/** 알림 받을 Slack 사용자 ID. 없으면 마지막으로 /route 를 쓴 사람 */
+let slackNotifyUser = process.env.SLACK_NOTIFY_USER ?? "";
 
 const log = (m: string) => console.log(`[${new Date().toISOString()}] ${m}`);
 const nav = new Navigator();
@@ -27,6 +33,7 @@ const nav = new Navigator();
 const HELP = [
   "*사용법*",
   "`/route 강남역 > 선릉역` 경로 시작 (`->`, `→`, `강남역에서 선릉역` 도 됨)",
+  "`/route 선릉역` 폰에서 받은 현재 위치에서 출발",
   "`/route next` · `/route prev` 다음/이전 단계",
   "`/route status` 현재 단계",
   "`/route detail` 카카오 원본 단계 전체",
@@ -80,23 +87,26 @@ app.command("/route", async ({ command, ack, respond }) => {
     return ack({ response_type: "ephemeral", text: "안내를 종료했습니다." });
   }
 
+  // 출발지가 없으면 폰에서 받은 마지막 위치를 쓴다
   const args = parseRouteArgs(text);
-  if (!args) {
+  const last = nav.lastKnownPosition;
+  const fromInput: PlaceInput | null = args ? args.from : last ? { lon: last.lon, lat: last.lat } : null;
+  const toInput = args ? args.to : text;
+  if (!fromInput) {
     return ack({
       response_type: "ephemeral",
-      text: "출발지와 도착지를 같이 적어 주세요. 예: `/route 강남역 > 선릉역`\n(iPhone 위치를 서버가 받지 않아 출발지가 필요합니다.)",
+      text: "출발지와 도착지를 같이 적어 주세요. 예: `/route 강남역 > 선릉역`\n(폰 위치를 아직 받지 못해서 출발지가 필요합니다.)",
     });
   }
 
-  await ack({ response_type: "ephemeral", text: `:mag: ${args.from} → ${args.to} 검색 중…` });
+  slackNotifyUser = command.user_id;
+  await ack({
+    response_type: "ephemeral",
+    text: `:mag: ${typeof fromInput === "string" ? fromInput : "현재 위치"} → ${toInput} 검색 중…`,
+  });
 
   try {
-    const [from, to] = await Promise.all([searchPlace(args.from, KAKAO_REST_KEY), searchPlace(args.to, KAKAO_REST_KEY)]);
-    if (!from || !to) {
-      await respond({ response_type: "ephemeral", text: `장소를 찾지 못했습니다: ${!from ? args.from : args.to}` });
-      return;
-    }
-    const route = await walkRoute(from, to, KAKAO_REST_KEY);
+    const { from, to, route } = await planRoute(fromInput, toInput, KAKAO_REST_KEY);
     nav.start({ from, to, route, startedBy: command.user_id });
     const guide = nav.current!.guide;
 
@@ -121,7 +131,22 @@ app.command("/route", async ({ command, ack, respond }) => {
 
 nav.onChange((m) => log(`nav -> ${m.type}${m.type === "step" ? ` ${m.index + 1}/${m.total}` : ""}`));
 
-const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, nav, log });
+// 단축어·Overland 에서 시작/재탐색한 경로를 Slack DM 으로도 알린다 (봇에 chat:write 필요. 실패해도 무시)
+async function notifySlack(text: string) {
+  if (!slackNotifyUser) return;
+  try {
+    await app.client.chat.postMessage({ channel: slackNotifyUser, text });
+  } catch (e) {
+    log(`slack notify failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+const api = API_TOKEN
+  ? createApi({ nav, apiToken: API_TOKEN, kakaoKey: KAKAO_REST_KEY, log, notify: (t) => void notifySlack(t) })
+  : undefined;
+if (!api) log("API_TOKEN 이 없어 폰용 HTTP API(/location, /route, /nav, /status)를 끕니다");
+
+const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, nav, log, api });
 await app.start();
 log("slack socket mode connected");
 

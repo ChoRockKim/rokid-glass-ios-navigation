@@ -1,32 +1,27 @@
 // 안경용 WebSocket. 경로: /glass
 // 인증: `Authorization: Bearer <GLASS_TOKEN>` 헤더 우선, 헤더를 못 넣는 클라이언트용으로 ?token= 도 받는다.
-import { createServer, type IncomingMessage, type Server } from "node:http";
-import { timingSafeEqual } from "node:crypto";
+import { createServer, type IncomingMessage, type ServerResponse, type Server } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { GlassInput, Navigator } from "./navigation.js";
+import { safeEqual, tokenFrom } from "./auth.js";
 
-function tokenFrom(req: IncomingMessage): string | null {
-  const h = req.headers.authorization;
-  if (h?.startsWith("Bearer ")) return h.slice(7);
-  const url = new URL(req.url ?? "/", "http://localhost");
-  return url.searchParams.get("token");
-}
+export function startGlassServer(opts: {
+  port: number;
+  token: string;
+  nav: Navigator;
+  log: (m: string) => void;
+  /** 폰용 HTTP API. 처리했으면 true */
+  api?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
+}): Server {
+  const { port, token, nav, log, api } = opts;
 
-function safeEqual(a: string, b: string) {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  return ab.length === bb.length && timingSafeEqual(ab, bb);
-}
-
-export function startGlassServer(opts: { port: number; token: string; nav: Navigator; log: (m: string) => void }): Server {
-  const { port, token, nav, log } = opts;
-
-  const http = createServer((req, res) => {
+  const http = createServer(async (req, res) => {
     if (req.url === "/healthz") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true, clients: wss.clients.size, active: Boolean(nav.current) }));
       return;
     }
+    if (api && (await api(req, res))) return;
     res.writeHead(404).end();
   });
 

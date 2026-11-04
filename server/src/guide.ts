@@ -17,8 +17,14 @@ export interface GuideStep {
   time: number; // s
   crossings: number; // 횡단보도 개수
   line1: string; // 안경 첫 줄: 방향
-  line2: string; // 안경 둘째 줄: 어디까지 얼마나
+  line2: string; // 안경 둘째 줄: 어디까지 얼마나 (전체 거리 기준)
   raw: string[]; // 합쳐진 카카오 원문
+  points: LonLat[]; // 이 단계 경로 좌표 (위치 추적용, 안경으로는 안 보냄)
+}
+
+/** 둘째 줄. 위치 추적 중이면 남은 거리로 다시 만든다. */
+export function line2For(step: Pick<GuideStep, "target" | "road">, meters: number): string {
+  return [`${step.target ? `${step.target}까지 ` : ""}${formatDistance(meters)}`, step.road ?? ""].filter(Boolean).join(" · ");
 }
 
 const MIN_STEP_M = 50;
@@ -151,9 +157,9 @@ export function buildGuide(steps: Step[]): GuideStep[] {
     const line1 = [`${arrow} ${at && turn !== "straight" ? `${at}에서 ` : ""}${word}`, crossings ? `횡단보도 ${crossings}` : ""]
       .filter(Boolean)
       .join(" · ");
-    const line2 = [`${target ? `${target}까지 ` : ""}${formatDistance(distance)}`, road ?? ""].filter(Boolean).join(" · ");
+    const line2 = line2For({ target, road }, distance);
 
-    out.push({ turn, angle, at, target, road, distance, time, crossings, line1, line2, raw: g.map((s) => s.guidance) });
+    out.push({ turn, angle, at, target, road, distance, time, crossings, line1, line2, raw: g.map((s) => s.guidance), points });
   });
   return out;
 }
