@@ -167,10 +167,10 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     )
     // 간소 화면용 주변 도로: 종류별 굵기만 다른 흐린 선 하나
     private val simpleRoad = mapOf(
-        "major" to stroke(dim, 1.8f, 170),
-        "road" to stroke(dim, 1.1f, 130),
-        "service" to stroke(dim, 0.7f, 90),
-        "path" to stroke(pathColor, 0.7f, 120, floatArrayOf(1.5f, 2.5f)),
+        "major" to stroke(dim, 2.4f, 180),
+        "road" to stroke(dim, 1.5f, 145),
+        "service" to stroke(dim, 0.9f, 100),
+        "path" to stroke(pathColor, 0.9f, 130, floatArrayOf(1.5f, 2.5f)),
     )
     // 건물: 서버가 감싸는 직사각형으로 줄여 보낸다. 면 없이 아주 흐린 윤곽만 (도로가 지나가는 부분은 지워진다)
     private val bldgLine = stroke(road, 0.7f, 90)
@@ -196,8 +196,8 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
          */
         private data class Viewport(val left: Float, val top: Float, val right: Float, val bottom: Float, val cx: Float, val cy: Float, val k: Float, val simple: Boolean, val me: Float = 1f)
         private val FULL_VIEW = Viewport(1f, 1f, W - 1f, H - 1f, CX, CY, K, simple = false)
-        /** 간소 화면: 왼쪽 150x150 에 기본 지도를 작게 (앞쪽 약 300m), 주변 도로는 가는 선만 */
-        private val COMPACT_VIEW = Viewport(14f, 90f, 164f, 240f, 89f, 212f, 0.4f, simple = true, me = 0.8f)
+        /** 간소 화면: 왼쪽 150x150 에 기본 지도를 작게 (앞쪽 약 200m), 주변 도로는 가는 선만 */
+        private val COMPACT_VIEW = Viewport(14f, 90f, 164f, 240f, 89f, 210f, 0.6f, simple = true, me = 0.85f)
         /** 간소 화면 글자 칸 왼쪽 끝 (오른쪽 정렬이라 실제 글자는 오른쪽 아래에 붙는다) */
         private const val COMPACT_TEXT_X = 176f
 
