@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { parseTransit } from "./kakao.js";
 import { rideStep, summarizeOption } from "./transit.js";
-import { Navigator, arrivalText } from "./navigation.js";
+import { Navigator, arrivalText, arrivalsText } from "./navigation.js";
 import { parseEta, shortSubwayMsg, stationName, xmlItems } from "./realtime.js";
 import type { GuideStep } from "./guide.js";
 
@@ -42,6 +42,8 @@ test("실시간 문구 파싱", () => {
   assert.deepEqual(xmlItems("<r><itemList><rtNm>421</rtNm><arrmsg1>3분후</arrmsg1></itemList></r>", "itemList"), [{ rtNm: "421", arrmsg1: "3분후" }]);
   assert.equal(arrivalText({ line: "421", etaSec: 200, message: "" }), "421 4분 후");
   assert.equal(arrivalText({ line: "421", etaSec: 30, message: "" }), "421 곧 도착");
+  assert.equal(arrivalsText([{ line: "1호선", etaSec: 0, message: "도착" }, { line: "1호선", etaSec: null, message: "6역 전" }]), "1호선 곧 도착 · 6역 전");
+  assert.equal(arrivalsText([{ line: "421", etaSec: 100, message: "" }, { line: "141", etaSec: 300, message: "" }]), "421 2분 후 · 141 5분 후");
 });
 
 test("upcomingRide: 정류장까지 걷는 단계가 여러 개여도 첫 탑승 구간을 찾는다", () => {
@@ -69,7 +71,7 @@ test("Navigator: 버스 구간 대기 → 실시간 표시 → 탑승 중", () =
     { line: "421", etaSec: 130, message: "2분10초후" },
   ]);
   let m = nav.snapshot();
-  assert.equal(m.type === "step" && m.line1, "🚌 421 3분 후 · 421 7분 후");
+  assert.equal(m.type === "step" && m.line1, "🚌 421 3분 · 7분 후");
   assert.equal(m.type === "step" && m.ride?.boarded, false);
 
   // 정류장에서 300m 진행 → 탑승 중

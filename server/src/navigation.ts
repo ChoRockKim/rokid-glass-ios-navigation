@@ -101,6 +101,18 @@ export function arrivalText(x: Arrival): string {
   return `${x.line} ${Math.ceil(x.etaSec / 60)}분 후`;
 }
 
+/** 두 대가 같은 노선이면 "421 4분 · 10분 후" 처럼 합친다 */
+export function arrivalsText(xs: Arrival[]): string {
+  const [a, b] = xs;
+  if (!a) return "";
+  if (!b) return arrivalText(a);
+  if (a.line === b.line && a.etaSec !== null && b.etaSec !== null && a.etaSec > 60) {
+    return `${a.line} ${Math.ceil(a.etaSec / 60)}분 · ${Math.ceil(b.etaSec / 60)}분 후`;
+  }
+  if (a.line === b.line) return `${arrivalText(a)} · ${arrivalText(b).slice(a.line.length + 1)}`;
+  return `${arrivalText(a)} · ${arrivalText(b)}`;
+}
+
 function rideView(a: ActiveRoute, step: GuideStep, now: number) {
   const r = step.ride!;
   const start = a.tracker.stepStart[a.index] ?? 0;
@@ -118,7 +130,7 @@ function rideView(a: ActiveRoute, step: GuideStep, now: number) {
   const line1 = boarded
     ? `${icon} ${name} 탑승 중`
     : arrivals.length
-      ? `${icon} ${arrivals.slice(0, 2).map(arrivalText).join(" · ")}`
+      ? `${icon} ${arrivalsText(arrivals.slice(0, 2))}`
       : `${icon} ${name} 탑승 · ${r.board}`;
   const line2 = boarded ? `${r.alight} 하차 · 약 ${stopsLeft}정거장` : `${r.board} → ${r.alight} · ${stopsTotal}정거장`;
   return {

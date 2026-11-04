@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse, type Server } 
 import { WebSocketServer, type WebSocket } from "ws";
 import type { GlassInput, Navigator, Position } from "./navigation.js";
 import { safeEqual, tokenFrom } from "./auth.js";
+import { VIEWER_HTML } from "./viewer.js";
 
 export function startGlassServer(opts: {
   port: number;
@@ -22,6 +23,12 @@ export function startGlassServer(opts: {
     if (req.url === "/healthz") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true, clients: wss.clients.size, active: Boolean(nav.current) }));
+      return;
+    }
+    if (req.method === "GET" && (req.url === "/viewer" || req.url === "/viewer/")) {
+      // 안경 화면 미리보기 (토큰은 페이지에서 입력, 브라우저에만 저장)
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      res.end(VIEWER_HTML);
       return;
     }
     if (api && (await api(req, res))) return;
