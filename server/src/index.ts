@@ -4,6 +4,8 @@ import { Navigator, parseRouteArgs, formatDistance, formatMinutes, messageFor } 
 import { startGlassServer } from "./glass.js";
 import { createApi } from "./api.js";
 import { planRoute, type PlaceInput } from "./planner.js";
+import { pendingTransit, planTransit, selectTransit, summarizeOption } from "./transit.js";
+import { providersFromEnv, startRealtimePoller } from "./realtime.js";
 import { dispatcher, proxiedFetch } from "./proxy.js";
 
 const { App, LogLevel, SocketModeReceiver } = bolt;
@@ -38,6 +40,7 @@ const HELP = [
   "`/route status` 현재 단계",
   "`/route detail` 카카오 원본 단계 전체",
   "`/route stop` 안내 종료",
+  "`/route 대중교통 강남역 > 선릉역` (또는 `/route 대중교통 선릉역`) 버스·지하철 후보 → `/route pick 2` 로 선택",
 ].join("\n");
 
 function statusText(): string {
@@ -52,7 +55,7 @@ function detailText(): string {
   const a = nav.current;
   if (!a) return "진행 중인 경로가 없습니다.";
   return [
-    `*카카오 원본 ${a.route.steps.length}단계* (안경에는 ${a.guide.length}단계로 합쳐서 표시)`,
+    a.mode === "transit" ? `*대중교통 ${a.guide.length}단계*` : `*카카오 원본 ${a.route.steps.length}단계* (안경에는 ${a.guide.length}단계로 합쳐서 표시)`,
     ...a.guide.flatMap((g, i) => [`*${i + 1}.* ${g.line1} · ${g.line2}`, ...g.raw.map((r) => `      ◦ ${r}`)]),
   ].join("\n");
 }
@@ -85,6 +88,49 @@ app.command("/route", async ({ command, ack, respond }) => {
   if (sub === "stop") {
     nav.stop();
     return ack({ response_type: "ephemeral", text: "안내를 종료했습니다." });
+  }
+
+  // ── 대중교통: 후보 조회 / 선택 ──
+  const pick = text.match(/^(?:pick|선택)\s*(\d+)$/i);
+  if (pick) {
+    await ack({ response_type: "ephemeral", text: `:hourglass: ${pick[1]}번 경로 준비 중…` });
+    try {
+      const { plan, option, guide, route } = await selectTransit(Number(pick[1]) - 1, KAKAO_REST_KEY);
+      nav.start({ from: plan.from, to: plan.to, route, guide, mode: "transit", startedBy: command.user_id });
+      await respond({
+        response_type: "ephemeral",
+        text: [`:bus: *${summarizeOption(option, Number(pick[1]) - 1)}*`, ...guide.map((g, i) => `*${i + 1}.* ${g.line1}\n      ${g.line2}`), "_안경에 1단계를 보냈습니다._"].join("\n"),
+      });
+    } catch (e) {
+      await respond({ response_type: "ephemeral", text: `:warning: ${e instanceof Error ? e.message : String(e)}` });
+    }
+    return;
+  }
+  const transitQuery = text.match(/^(?:대중교통|버스|지하철|transit)\s+(.+)$/i);
+  if (transitQuery) {
+    const targs = parseRouteArgs(transitQuery[1]!);
+    const lastPos = nav.lastKnownPosition;
+    const tFrom: PlaceInput | null = targs ? targs.from : lastPos ? { lon: lastPos.lon, lat: lastPos.lat } : null;
+    const tTo = targs ? targs.to : transitQuery[1]!;
+    if (!tFrom) return ack({ response_type: "ephemeral", text: "출발지도 적어 주세요. 예: `/route 대중교통 외대앞역 > 왕십리역`" });
+    slackNotifyUser = command.user_id;
+    await ack({ response_type: "ephemeral", text: `:mag: 대중교통 후보 검색 중…` });
+    try {
+      const plan = await planTransit(tFrom, tTo, KAKAO_REST_KEY);
+      pendingTransit.set(plan);
+      await respond({
+        response_type: "ephemeral",
+        text: [
+          `:busstop: *${plan.from.name} → ${plan.to.name}* 대중교통 후보`,
+          ...plan.options.map(summarizeOption),
+          plan.landingUrl ? `<${plan.landingUrl}|카카오맵에서 보기>` : "",
+          "_`/route pick 번호` 로 선택_",
+        ].filter(Boolean).join("\n"),
+      });
+    } catch (e) {
+      await respond({ response_type: "ephemeral", text: `:warning: ${e instanceof Error ? e.message : String(e)}` });
+    }
+    return;
   }
 
   // 출발지가 없으면 폰에서 받은 마지막 위치를 쓴다
@@ -147,11 +193,13 @@ const api = API_TOKEN
 if (!api) log("API_TOKEN 이 없어 폰용 HTTP API(/location, /route, /nav, /status)를 끕니다");
 
 const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, nav, log, api });
+const stopPoller = startRealtimePoller(nav, providersFromEnv(), log);
 await app.start();
 log("slack socket mode connected");
 
 const shutdown = async () => {
   log("shutting down");
+  stopPoller();
   glass.close();
   await app.stop().catch(() => {});
   process.exit(0);

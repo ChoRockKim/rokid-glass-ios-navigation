@@ -91,6 +91,72 @@ export function parseWalk(body: RawWalk): WalkRoute {
   };
 }
 
+// ── 대중교통 ── (2026-11-04 직접 호출로 형식 확인. 실시간 도착·정류장 ID 는 없다)
+export type TransitKind = "WALKING" | "BUS" | "SUBWAY";
+
+export interface TransitLeg {
+  kind: TransitKind;
+  guidance: string; // 예: "간선 421 (제기역약령시장 > 성동구청)"
+  distance: number;
+  time: number; // s
+  stops: string[]; // 탑승 ~ 하차 정류장 이름 전부 (WALKING 은 [출발, 도착])
+  lines: string[]; // 탈 수 있는 노선 이름 (예: ["421"], ["1호선"])
+  points: LonLat[];
+}
+
+export interface TransitRoute {
+  type: string; // SUBWAY | BUS | BUS_AND_SUBWAY
+  totalDistance: number;
+  totalTime: number;
+  transfers: number;
+  fare: number | null;
+  legs: TransitLeg[];
+}
+
+export async function transitRoutes(from: Place, to: Place, key: string): Promise<{ routes: TransitRoute[]; landingUrl?: string }> {
+  const url = new URL("/v2/routing/publictraffic", BASE);
+  url.searchParams.set("start_x", String(from.x));
+  url.searchParams.set("start_y", String(from.y));
+  url.searchParams.set("end_x", String(to.x));
+  url.searchParams.set("end_y", String(to.y));
+  return parseTransit((await getJson(url, key)) as RawTransit);
+}
+
+interface RawTransit {
+  status?: string;
+  properties?: { landingURL?: string };
+  routes?: {
+    properties: { type: string; totalDistance: number; totalTime: number; transfers?: number; fare?: { value?: number } };
+    steps?: {
+      properties: { type: string; guidance: string; distance: number; time: number; stops?: { name: string }[]; vehicles?: { name: string }[] };
+      path?: { points?: LonLat[] };
+    }[];
+  }[];
+}
+
+export function parseTransit(body: RawTransit): { routes: TransitRoute[]; landingUrl?: string } {
+  if (!body.routes?.length) throw new KakaoError(`대중교통 경로 없음 (status=${body.status ?? "?"})`);
+  return {
+    landingUrl: body.properties?.landingURL,
+    routes: body.routes.map((r) => ({
+      type: r.properties.type,
+      totalDistance: r.properties.totalDistance,
+      totalTime: r.properties.totalTime,
+      transfers: r.properties.transfers ?? 0,
+      fare: r.properties.fare?.value ?? null,
+      legs: (r.steps ?? []).map(({ properties: p, path }) => ({
+        kind: (["BUS", "SUBWAY"].includes(p.type) ? p.type : "WALKING") as TransitKind,
+        guidance: p.guidance,
+        distance: p.distance,
+        time: p.time,
+        stops: (p.stops ?? []).map((s) => s.name),
+        lines: [...new Set((p.vehicles ?? []).map((v) => v.name))],
+        points: path?.points ?? [],
+      })),
+    })),
+  };
+}
+
 export async function walkRoute(from: Place, to: Place, key: string): Promise<WalkRoute> {
   const url = new URL("/v2/routing/walk", BASE);
   url.searchParams.set("start_x", String(from.x));

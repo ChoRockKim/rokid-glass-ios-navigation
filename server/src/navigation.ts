@@ -1,7 +1,7 @@
 // 진행 상태. 개인용이라 활성 경로는 하나만 둔다.
 // 진행은 두 가지로 바뀐다: 수동(안경 탭, /route next) 과 위치(POST /location).
 import type { LonLat, Place, WalkRoute } from "./kakao.js";
-import { buildGuide, formatDistance, line2For, type GuideStep, type Turn } from "./guide.js";
+import { buildGuide, formatDistance, line2For, type Arrival, type GuideStep, type Turn } from "./guide.js";
 import { RouteTracker } from "./tracking.js";
 
 export { formatDistance };
@@ -25,7 +25,8 @@ export interface Position {
 export interface ActiveRoute {
   from: Place;
   to: Place;
-  route: WalkRoute; // 카카오 원본 (단계 그대로)
+  mode: "walk" | "transit";
+  route: WalkRoute; // 카카오 도보 원본 (대중교통이면 steps 는 비어 있고 합계만)
   guide: GuideStep[]; // 안경용으로 합친 단계
   index: number; // guide 기준
   startedBy: string; // Slack user id 또는 "api"
@@ -51,6 +52,15 @@ export type GlassMessage =
       remaining: number | null; // 위치 추적 중일 때 이 단계 끝까지 남은 거리
       offRoute: boolean;
       destination: string;
+      ride?: {
+        kind: "bus" | "subway";
+        lines: string[];
+        board: string;
+        alight: string;
+        boarded: boolean;
+        stopsLeft: number;
+        arrivals: Arrival[];
+      };
     }
   | { type: "arrived"; destination: string; text: string }
   | { type: "idle"; text: string };
@@ -75,14 +85,53 @@ function remainingOf(a: ActiveRoute): number | null {
   return Math.max(0, a.tracker.stepEnd[a.index]! - a.progress);
 }
 
-export function messageFor(active: ActiveRoute | null): GlassMessage {
+/** 탑승으로 볼 진행 거리 (정류장에서 이만큼 지나면 탄 것으로 본다) */
+const BOARDED_M = 80;
+/** 이보다 오래된 실시간 정보는 안 쓴다 */
+const LIVE_MAX_AGE_MS = 90_000;
+
+export function arrivalText(x: Arrival): string {
+  if (x.etaSec === null) return `${x.line} ${x.message}`;
+  if (x.etaSec <= 60) return `${x.line} 곧 도착`;
+  return `${x.line} ${Math.ceil(x.etaSec / 60)}분 후`;
+}
+
+function rideView(a: ActiveRoute, step: GuideStep, now: number) {
+  const r = step.ride!;
+  const start = a.tracker.stepStart[a.index] ?? 0;
+  const len = Math.max(1, (a.tracker.stepEnd[a.index] ?? start) - start);
+  const into = a.progress === null ? 0 : a.progress - start;
+  const boarded = into > BOARDED_M;
+  const remaining = remainingOf(a) ?? step.distance;
+  const stopsTotal = Math.max(1, r.stops.length - 1);
+  // 정류장 좌표가 없어 거리 비율로 추정한다
+  const stopsLeft = boarded ? Math.max(1, Math.ceil((stopsTotal * remaining) / len)) : stopsTotal;
+  const icon = r.kind === "bus" ? "🚌" : "🚇";
+  const name = r.lines.slice(0, 3).join("/");
+  const fresh = r.live && r.liveAt !== null && now - r.liveAt < LIVE_MAX_AGE_MS;
+  const arrivals = fresh ? [...r.live!].sort((x, y) => (x.etaSec ?? 1e9) - (y.etaSec ?? 1e9)) : [];
+  const line1 = boarded
+    ? `${icon} ${name} 탑승 중`
+    : arrivals.length
+      ? `${icon} ${arrivals.slice(0, 2).map(arrivalText).join(" · ")}`
+      : `${icon} ${name} 탑승 · ${r.board}`;
+  const line2 = boarded ? `${r.alight} 하차 · 약 ${stopsLeft}정거장` : `${r.board} → ${r.alight} · ${stopsTotal}정거장`;
+  return {
+    line1,
+    line2,
+    ride: { kind: r.kind, lines: r.lines, board: r.board, alight: r.alight, boarded, stopsLeft, arrivals },
+  };
+}
+
+export function messageFor(active: ActiveRoute | null, now = Date.now()): GlassMessage {
   if (!active) return { type: "idle", text: "경로 없음 · Slack에서 /route" };
   const { guide, index, to } = active;
   const step = guide[index];
   if (!step) return { type: "arrived", destination: to.name, text: `도착: ${to.name}` };
   const remaining = remainingOf(active);
-  const line1 = active.offRoute ? "⚠ 경로를 벗어났습니다" : step.line1;
-  const line2 = remaining === null ? step.line2 : line2For(step, remaining);
+  const rv = step.ride ? rideView(active, step, now) : null;
+  const line1 = active.offRoute ? "⚠ 경로를 벗어났습니다" : (rv?.line1 ?? step.line1);
+  const line2 = rv?.line2 ?? (remaining === null ? step.line2 : line2For(step, remaining));
   return {
     type: "step",
     index,
@@ -95,6 +144,7 @@ export function messageFor(active: ActiveRoute | null): GlassMessage {
     remaining,
     offRoute: active.offRoute,
     destination: to.name,
+    ...(rv ? { ride: rv.ride } : {}),
   };
 }
 
@@ -128,7 +178,7 @@ export class Navigator {
 
   /** force=false 면 직전과 같은 내용(남은 거리는 10m 단위)은 보내지 않는다. 안경 화면 깜빡임 방지 */
   private emit(force = true) {
-    const msg = messageFor(this.active);
+    const msg = messageFor(this.active, this.now());
     const key = JSON.stringify(
       msg.type === "step" ? { ...msg, remaining: msg.remaining === null ? null : Math.round(msg.remaining / 10), line2: undefined, text: undefined } : msg,
     );
@@ -137,10 +187,15 @@ export class Navigator {
     for (const fn of this.listeners) fn(msg);
   }
 
-  start(r: { from: Place; to: Place; route: WalkRoute; startedBy: string }) {
-    const guide = buildGuide(r.route.steps);
+  /** guide 를 주면 그대로 쓴다 (대중교통). 없으면 도보 경로에서 만든다 */
+  start(r: { from: Place; to: Place; route: WalkRoute; startedBy: string; guide?: GuideStep[]; mode?: "walk" | "transit" }) {
+    const guide = r.guide ?? buildGuide(r.route.steps);
     this.active = {
-      ...r,
+      from: r.from,
+      to: r.to,
+      route: r.route,
+      startedBy: r.startedBy,
+      mode: r.mode ?? "walk",
       guide,
       index: 0,
       tracker: new RouteTracker(guide),
@@ -181,7 +236,29 @@ export class Navigator {
   }
 
   snapshot(): GlassMessage {
-    return messageFor(this.active);
+    return messageFor(this.active, this.now());
+  }
+
+  /** 지금 보여 주는 단계 또는 바로 다음 단계 중 아직 안 탄 버스·지하철 (실시간 폴링 대상) */
+  upcomingRide(): { index: number; step: GuideStep } | null {
+    const a = this.active;
+    if (!a) return null;
+    for (const i of [a.index, a.index + 1]) {
+      const step = a.guide[i];
+      if (!step?.ride) continue;
+      const start = a.tracker.stepStart[i] ?? 0;
+      const boarded = i === a.index && a.progress !== null && a.progress - start > BOARDED_M;
+      if (!boarded) return { index: i, step };
+    }
+    return null;
+  }
+
+  /** 폴링 결과 반영. 경로가 바뀌었으면(step 이 더 이상 없으면) 무시 */
+  setArrivals(step: GuideStep, arrivals: Arrival[]) {
+    if (!step.ride || !this.active?.guide.includes(step)) return;
+    step.ride.live = arrivals;
+    step.ride.liveAt = this.now();
+    this.emit(false);
   }
 
   /** 위치 여러 개를 시간순으로 반영하고 마지막에 한 번만 안경에 보낸다 */

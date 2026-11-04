@@ -37,6 +37,8 @@ Slack 앱 설정에 필요한 것: Socket Mode 켜기, App-Level Token(`connecti
 |---|---|---|
 | `POST /location` | Overland `{"locations":[GeoJSON…]}` / `{"lat","lon","acc"}` / OwnTracks | 위치 반영. 응답 `{"result":"ok", index, offset, offRoute…}` |
 | `POST /route` | `{"to":"왕십리역","lat":..,"lon":..}` 또는 `{"to","from"}` | 경로 시작. 출발지가 없으면 마지막 받은 위치. 응답에 `speech` |
+| `POST /transit` | `{"to","lat","lon"}` 또는 `{"to","from"}` | 대중교통 후보 최대 5개 (`options`, `speech`) |
+| `POST /transit/select` | `{"option":1}` | 후보 선택(1부터) → 안경 안내 시작 |
 | `POST /nav` | `{"action":"next"\|"prev"\|"stop"}` | 수동 진행 |
 | `GET /status` | | 현재 상태와 단계 목록 |
 
@@ -46,6 +48,13 @@ Slack 앱 설정에 필요한 것: Socket Mode 켜기, App-Level Token(`connecti
 - 경로선에서 35m(또는 정확도×1.5) 넘게 떨어지면 이탈. 3번 연속이면 현재 위치에서 재탐색 (30초 간격 제한).
 - 수동 next/prev 후 60초 동안은 위치가 단계를 되돌리지 않는다.
 - 안경에는 단계·이탈이 바뀌거나 남은 거리가 10m 단위로 바뀔 때만 보낸다.
+
+대중교통 (`src/transit.ts`, `src/realtime.ts`):
+- 카카오 `routing/publictraffic` 후보 → 고르면 [앞 도보(카카오 도보 API)] + [구간별 도보/버스/지하철] + [뒤 도보] 로 안경 단계를 만든다.
+- 버스·지하철 단계: 타기 전 `🚌 421 3분 후 · 421 9분 후`, 탄 뒤(정류장에서 80m+ 진행) `🚌 421 탑승 중 / 성동구청 하차 · 약 2정거장`. 남은 정거장은 거리 비율 추정(정류장 좌표가 응답에 없음).
+- 실시간 도착: 현재 또는 다음 단계의 아직 안 탄 구간만 `REALTIME_POLL_MS`(기본 20초)마다 조회. 키 없으면 꺼짐. **서울 지하철·버스 API 명세는 미검증** → 키를 받으면 `npx tsx scripts/probe-realtime.ts` 로 실제 응답 확인.
+- 대중교통 중 이탈은 표시만 하고 도보 재탐색은 하지 않는다. 지하철 안에서는 GPS 가 안 잡혀 진행이 멈출 수 있다 (탭으로 넘김).
+- Slack: `/route 대중교통 외대앞역 > 왕십리역` → `/route pick 3`
 
 단축어 만드는 법: `../docs/ios-shortcuts.md`
 
@@ -80,6 +89,8 @@ API_TOKEN=... npx tsx scripts/simulate-walk.ts 37.5962 127.0633 왕십리역 20 
 | `/route next` → 안경 WS 2단계 | 확인 |
 | 단계 병합·회전 방향 (외대앞→왕십리 32→14~15단계) | 실제 카카오 응답으로 확인 |
 | `/location` 자동 진행·남은 거리·이탈·재탐색 | 실제 경로 좌표로 만든 가짜 위치로 확인 (`simulate-walk.ts`). 실제 걸어 본 것 아님 |
+| 대중교통 후보·선택·안경 단계 (외대앞→왕십리, 273번→경의중앙선) | 실제 카카오 응답으로 확인 |
+| 실시간 도착 폴링 | 가짜 데이터로만 확인. 서울 API 는 키 없음·도메인 차단으로 미호출 |
 | 단축어, Overland 실기 | 미확인 (폰이 이 서버에 닿으려면 배포 필요) |
 | 안경 앱 연동 | 로컬 검증 필요 (안경) |
 

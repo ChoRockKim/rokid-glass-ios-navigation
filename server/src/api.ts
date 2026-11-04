@@ -8,6 +8,8 @@
 //   - OwnTracks: {"_type":"location","lat":..,"lon":..,"acc":..,"tst":epochSec}
 // POST /route     {"to":"왕십리역","from":"외대앞역"} 또는 {"to":"왕십리역","lat":..,"lon":..}
 //                 from 도 좌표도 없으면 마지막으로 받은 위치를 출발지로 쓴다.
+// POST /transit   {"to":"왕십리역","lat":..,"lon":..} → 대중교통 후보 (options[], speech)
+// POST /transit/select {"option":1}  (1부터) → 안내 시작
 // POST /nav       {"action":"next"|"prev"|"stop"}
 // GET  /status
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -15,6 +17,7 @@ import { KakaoError } from "./kakao.js";
 import { messageFor, formatMinutes, type Navigator, type Position } from "./navigation.js";
 import { formatDistance } from "./guide.js";
 import { planRoute, type PlaceInput } from "./planner.js";
+import { pendingTransit, planTransit, selectTransit, speakOption, summarizeOption } from "./transit.js";
 import { safeEqual, tokenFrom } from "./auth.js";
 
 const MAX_BODY = 5 * 1024 * 1024; // Overland 배치(최대 1000점) 여유
@@ -101,6 +104,7 @@ export function createApi(deps: ApiDeps) {
     const a = nav.current;
     const p = a?.lastPosition;
     if (!a || !p || rerouting) return;
+    if (a.mode === "transit") return; // 대중교통은 도보로 재탐색하면 안 된다. 이탈 표시만
     if ((offRouteCount ?? 0) < REROUTE_AFTER || Date.now() - lastReroute < REROUTE_COOLDOWN_MS) return;
     rerouting = true;
     lastReroute = Date.now();
@@ -138,7 +142,7 @@ export function createApi(deps: ApiDeps) {
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
     const url = new URL(req.url ?? "/", "http://localhost");
     const route = `${req.method} ${url.pathname}`;
-    if (!["POST /location", "POST /route", "POST /nav", "GET /status"].includes(route)) return false;
+    if (!["POST /location", "POST /route", "POST /transit", "POST /transit/select", "POST /nav", "GET /status"].includes(route)) return false;
 
     const given = tokenFrom(req);
     if (!given || !safeEqual(given, apiToken)) {
@@ -190,6 +194,46 @@ export function createApi(deps: ApiDeps) {
           ...summary(),
           speech: `${planned.to.name}까지 ${formatDistance(planned.route.totalDistance)}, 약 ${formatMinutes(planned.route.totalTime)}.${a.guide[0] ? ` 먼저 ${a.guide[0].line2.split(" · ")[0]}.` : ""}`,
         });
+        return true;
+      }
+
+      if (route === "POST /transit") {
+        const b = body as Record<string, unknown>;
+        const to = typeof b.to === "string" ? b.to.trim() : "";
+        if (!to) throw new HttpError(400, "to is required");
+        let from: PlaceInput | null = typeof b.from === "string" && b.from.trim() ? b.from.trim() : null;
+        if (!from) {
+          const lat = num(b.lat);
+          const lon = num(b.lon);
+          if (lat !== undefined && lon !== undefined) from = { lat, lon };
+          else if (nav.lastKnownPosition) from = { lat: nav.lastKnownPosition.lat, lon: nav.lastKnownPosition.lon };
+        }
+        if (!from) throw new HttpError(400, "from 또는 lat/lon 이 필요합니다");
+        const plan = await planTransit(from, to, kakaoKey);
+        pendingTransit.set(plan);
+        send(res, 200, {
+          from: plan.from.name,
+          to: plan.to.name,
+          options: plan.options.map(summarizeOption),
+          speech: plan.options.map(speakOption).join(". "),
+        });
+        return true;
+      }
+
+      if (route === "POST /transit/select") {
+        const n = num((body as Record<string, unknown>).option);
+        if (n === undefined) throw new HttpError(400, "option (1부터) is required");
+        let picked;
+        try {
+          picked = await selectTransit(n - 1, kakaoKey);
+        } catch (e) {
+          if (e instanceof KakaoError) throw e;
+          throw new HttpError(400, e instanceof Error ? e.message : String(e));
+        }
+        const { plan, option, guide, route: r } = picked;
+        nav.start({ from: plan.from, to: plan.to, route: r, guide, mode: "transit", startedBy: "api" });
+        notify?.(`:bus: *${summarizeOption(option, n - 1)}* (단축어에서 시작)`);
+        send(res, 200, { ...summary(), speech: `${n}번 경로로 안내합니다. ${guide[0]?.line1.replace(/^\S+\s/, "") ?? ""}` });
         return true;
       }
 

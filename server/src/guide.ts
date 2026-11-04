@@ -5,7 +5,27 @@
 // 검증: 외대앞역→왕십리역 1건에서 카카오가 "왼쪽길로" 라고 쓴 두 곳이 계산 결과 좌회전(-73°, -94°)과 일치. 실지 확인은 안 됨.
 import type { LonLat, Step } from "./kakao.js";
 
-export type Turn = "start" | "straight" | "slight-left" | "slight-right" | "left" | "right" | "uturn";
+export type Turn = "start" | "straight" | "slight-left" | "slight-right" | "left" | "right" | "uturn" | "walk" | "bus" | "subway";
+
+/** 실시간 도착 (폴링으로 채움) */
+export interface Arrival {
+  line: string; // 노선 (예: "421", "1호선")
+  etaSec: number | null; // 도착까지 초. 모르면 null
+  message: string; // 원문 요약 (예: "3분후[2번째 전]", "전역 도착")
+  direction?: string; // 예: "청량리 방면"
+}
+
+/** 버스·지하철 구간 */
+export interface RideInfo {
+  kind: "bus" | "subway";
+  lines: string[];
+  board: string; // 타는 곳
+  alight: string; // 내리는 곳
+  stops: string[]; // 탑승 ~ 하차 (양끝 포함)
+  boardPoint: LonLat | null;
+  live: Arrival[] | null; // 실시간 도착. 아직 없으면 null
+  liveAt: number | null; // 갱신 시각 (ms)
+}
 
 export interface GuideStep {
   turn: Turn;
@@ -20,6 +40,7 @@ export interface GuideStep {
   line2: string; // 안경 둘째 줄: 어디까지 얼마나 (전체 거리 기준)
   raw: string[]; // 합쳐진 카카오 원문
   points: LonLat[]; // 이 단계 경로 좌표 (위치 추적용, 안경으로는 안 보냄)
+  ride?: RideInfo; // 버스·지하철 구간일 때
 }
 
 /** 둘째 줄. 위치 추적 중이면 남은 거리로 다시 만든다. */
@@ -83,6 +104,9 @@ export function classifyTurn(angle: number | null): Turn {
 
 export const TURN_LABEL: Record<Turn, { arrow: string; word: string }> = {
   start: { arrow: "●", word: "출발" },
+  walk: { arrow: "🚶", word: "도보" },
+  bus: { arrow: "🚌", word: "버스" },
+  subway: { arrow: "🚇", word: "지하철" },
   straight: { arrow: "↑", word: "직진" },
   "slight-left": { arrow: "↖", word: "왼쪽 방향" },
   "slight-right": { arrow: "↗", word: "오른쪽 방향" },
