@@ -22,6 +22,13 @@ class MainActivity : Activity() {
     private lateinit var hud: HudView
     private lateinit var client: ServerClient
     private lateinit var heading: HeadingProvider
+    private var lastCalib: MapPos? = null
+
+    private fun distM(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val dy = (lat2 - lat1) * 110_540
+        val dx = (lon2 - lon1) * 111_320 * Math.cos(Math.toRadians(lat1))
+        return Math.hypot(dx, dy)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -60,7 +67,7 @@ class MainActivity : Activity() {
         val screen = "${dm.widthPixels}x${dm.heightPixels} d${dm.density}"
         Log.i("Route", "server=${BuildConfig.SERVER_BASE} heading=${heading.mode} screen=$screen")
         // 화면 크기·센서 모드를 처음 10초 왼쪽 아래에 보여 준다 (실기 확인용)
-        hud.debug = "화면 $screen · 방향 ${heading.mode}"
+        hud.debug = "화면 $screen · 방향 ${heading.describe}"
         hud.postDelayed({ hud.debug = null }, 10_000)
     }
 
@@ -79,9 +86,17 @@ class MainActivity : Activity() {
     private fun onServerMessage(m: JSONObject) {
         val s = hud.state
         val next = s.apply(m)
-        // 경로 위를 걷는 중이면 상대 방향 센서의 0°를 경로 방향에 맞춘다
+        // 경로 위를 실제로 걷는 중(직전 보정 위치에서 3m+)일 때만 상대 방향 센서의 0°를 경로 방향에 맞춘다.
+        // 서서 두리번거릴 때 맞추면 보는 방향이 경로 방향으로 끌려간다
         val p = next.pos
-        if (m.optString("type") == "map-pos" && p != null && p.snapped && !next.idle) heading.calibrate(p.heading)
+        if (m.optString("type") == "map-pos" && p != null && p.snapped && !next.idle) {
+            val last = lastCalib
+            val moved = last == null || distM(last.lat, last.lon, p.lat, p.lon) >= 3.0
+            if (moved) {
+                heading.calibrateFromRoute(p.heading)
+                lastCalib = p
+            }
+        }
         hud.state = next
     }
 

@@ -6,43 +6,66 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.util.Log
+import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.sqrt
 
 /**
  * 안경이 보고 있는 방향(북=0°, 시계방향).
  *
- * - TYPE_ROTATION_VECTOR(지자기 포함)가 있으면 북쪽 기준 절대 방위를 그대로 쓴다.
- * - 없으면 TYPE_GAME_ROTATION_VECTOR(지자기 없음, 상대 각도)로 머리 회전만 따라가고,
- *   걷는 동안 경로 진행 방향으로 0°를 조금씩 맞춘다 ([calibrate]).
- *   Rokid 공식 예제(glass3_sdk_demo HeadPoseTracker)가 GAME_ROTATION_VECTOR 를 쓰고 지자기 유무를 로그로만 확인한다.
- * - 둘 다 없으면 null → 화면은 경로 진행 방향을 위로 쓴다.
+ * 모드 (있는 센서에 따라)
+ * - ABSOLUTE: TYPE_ROTATION_VECTOR(지자기 포함) → 북 기준 방위를 그대로.
+ * - RELATIVE_MAG: GAME_ROTATION_VECTOR(빠르고 부드러운 상대 회전) + 가속도·지자기로 구한 북 기준 방위로 0°를 천천히 보정.
+ * - RELATIVE: GAME_ROTATION_VECTOR 만. 걸을 때(3m+ 이동) 경로 진행 방향으로 0°를 보정. 서서 두리번거릴 때는 보정 안 함.
+ * - NONE: null → 화면은 경로 진행 방향을 위로.
+ * 2026-11-04 사용자 안경 실기: RELATIVE 로 뜸 (TYPE_ROTATION_VECTOR 없음). 지자기 단독 센서 유무는 0.2.4 화면 표시로 확인.
  *
- * 방위는 기기 -Z 축(화면 너머 정면)의 수평 투영으로 구한다. 고개 끄덕임(피치)에 흔들리지 않게.
- * ⚠ 실기 확인 필요: 안경의 정면이 정말 -Z 인지 (아니면 +Y 등).
+ * 방위는 기기 -Z 축(화면 너머 정면)의 수평 투영. getOrientation(눕힌 자세 기준)은 고개 끄덕임이 방위로 섞여서 쓰지 않는다.
  */
 class HeadingProvider(context: Context) : SensorEventListener {
-    enum class Mode { ABSOLUTE, RELATIVE, NONE }
+    enum class Mode { ABSOLUTE, RELATIVE_MAG, RELATIVE, NONE }
 
     private val sm = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
     private val absolute = sm.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
     private val game = sm.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
+    private val accel = sm.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+    private val magnetic = sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
     val mode: Mode = when {
         absolute != null -> Mode.ABSOLUTE
+        game != null && accel != null && magnetic != null -> Mode.RELATIVE_MAG
         game != null -> Mode.RELATIVE
         else -> Mode.NONE
     }
 
+    /** 화면 표시용: "RELATIVE_MAG · 지자기 Y" */
+    val describe = "$mode · 지자기 ${if (magnetic != null) "Y" else "N"}"
+
     private val rot = FloatArray(9)
-    private var yaw: Float? = null // 센서 원값 (도)
-    private var offset = 0f // RELATIVE 일 때 yaw + offset = 북 기준 추정
+    private val magRot = FloatArray(9)
+    private val gravity = FloatArray(3)
+    private val geomag = FloatArray(3)
+    private var haveGravity = false
+    private var haveGeomag = false
+
+    private var yaw: Float? = null // 회전 센서 원값 (도)
+    private var offset = 0f // yaw + offset = 북 기준 추정
     private var calibrated = false
 
     init {
-        Log.i(TAG, "heading mode=$mode rotationVector=${absolute != null} game=${game != null} magnetic=${sm.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD) != null}")
+        Log.i(TAG, "heading mode=$mode rotationVector=${absolute != null} game=${game != null} accel=${accel != null} magnetic=${magnetic != null}")
     }
 
     fun start() {
-        val s = absolute ?: game ?: return
-        sm.registerListener(this, s, SensorManager.SENSOR_DELAY_GAME)
+        when (mode) {
+            Mode.ABSOLUTE -> sm.registerListener(this, absolute, SensorManager.SENSOR_DELAY_GAME)
+            Mode.RELATIVE_MAG -> {
+                sm.registerListener(this, game, SensorManager.SENSOR_DELAY_GAME)
+                sm.registerListener(this, accel, SensorManager.SENSOR_DELAY_UI)
+                sm.registerListener(this, magnetic, SensorManager.SENSOR_DELAY_UI)
+            }
+            Mode.RELATIVE -> sm.registerListener(this, game, SensorManager.SENSOR_DELAY_GAME)
+            Mode.NONE -> {}
+        }
     }
 
     fun stop() = sm.unregisterListener(this)
@@ -51,51 +74,73 @@ class HeadingProvider(context: Context) : SensorEventListener {
     fun heading(): Float? {
         val y = yaw ?: return null
         return when (mode) {
-            Mode.ABSOLUTE -> norm(y)
-            Mode.RELATIVE -> if (calibrated) norm(y + offset) else null
+            Mode.ABSOLUTE -> y
+            Mode.RELATIVE_MAG, Mode.RELATIVE -> if (calibrated) norm(y + offset) else null
             Mode.NONE -> null
         }
     }
 
     /**
-     * 걷는 중(경로 위) 받은 경로 진행 방향으로 상대 센서의 0°를 맞춘다. 고개를 잠깐 돌린 것에 끌려가지 않게 조금씩(10%).
-     * 처음 한 번은 바로 맞춘다.
+     * RELATIVE 전용: 걷는 중(경로 위, 직전 보정 위치에서 3m+ 이동) 경로 진행 방향으로 0°를 맞춘다.
+     * 서서 두리번거릴 때는 부르지 않는다. 처음 한 번은 바로, 이후는 10%씩.
      */
-    fun calibrate(routeHeading: Float) {
+    fun calibrateFromRoute(routeHeading: Float) {
         if (mode != Mode.RELATIVE) return
+        nudge(routeHeading, rate = 0.1f)
+    }
+
+    private fun nudge(trueHeading: Float, rate: Float) {
         val y = yaw ?: return
-        val target = norm(routeHeading - y)
+        val target = norm(trueHeading - y)
         if (!calibrated) {
             offset = target
             calibrated = true
             return
         }
         val d = ((target - offset + 540f) % 360f) - 180f
-        offset = norm(offset + d * 0.1f)
+        offset = norm(offset + d * rate)
     }
 
     override fun onSensorChanged(event: SensorEvent) {
-        SensorManager.getRotationMatrixFromVector(rot, event.values)
-        // 안경은 화면이 눈앞에 세워진 자세라 getOrientation(바닥에 눕힌 자세 기준)을 쓰면
-        // 고개를 끄덕일 때 기울기가 방위로 섞인다 (0.2.x 실기에서 확인).
-        // 대신 "화면 너머 정면" = 기기 -Z 축을 세계 좌표로 돌려 수평면에 투영한 방향을 방위로 쓴다.
-        // rot 는 기기→세계(동, 북, 위) 행렬. 기기 (0,0,-1) → 세계 (-r[2], -r[5], -r[8])
-        val east = -rot[2]
-        val north = -rot[5]
-        val up = -rot[8]
-        val horiz = kotlin.math.sqrt(east * east + north * north)
-        // 고개를 60° 넘게 숙이거나 들면 수평 성분이 작아 방위가 흔들린다 → 마지막 값 유지
-        if (horiz < 0.5f || kotlin.math.abs(up) > 0.87f) return
-        val deg = norm(Math.toDegrees(kotlin.math.atan2(east, north).toDouble()).toFloat())
-        val prev = yaw
-        if (prev == null) {
-            yaw = deg
-            return
+        when (event.sensor.type) {
+            Sensor.TYPE_ROTATION_VECTOR, Sensor.TYPE_GAME_ROTATION_VECTOR -> {
+                SensorManager.getRotationMatrixFromVector(rot, event.values)
+                val deg = forwardHeading(rot) ?: return
+                val prev = yaw
+                if (prev == null) {
+                    yaw = deg
+                    return
+                }
+                val d = ((deg - prev + 540f) % 360f) - 180f
+                if (abs(d) < 2f) return // 작은 떨림 무시
+                yaw = norm(prev + d * 0.25f) // 부드럽게 (최단 방향)
+            }
+            Sensor.TYPE_ACCELEROMETER -> {
+                lowPass(event.values, gravity, haveGravity)
+                haveGravity = true
+            }
+            Sensor.TYPE_MAGNETIC_FIELD -> {
+                lowPass(event.values, geomag, haveGeomag)
+                haveGeomag = true
+                if (!haveGravity || !SensorManager.getRotationMatrix(magRot, null, gravity, geomag)) return
+                val north = forwardHeading(magRot) ?: return
+                // 지자기는 건물·차량 근처에서 흔들리므로 아주 천천히(2%) 0°를 맞춘다. 처음 한 번은 바로
+                nudge(north, rate = 0.02f)
+            }
         }
-        val d = ((deg - prev + 540f) % 360f) - 180f
-        if (kotlin.math.abs(d) < 2f) return // 작은 떨림 무시
-        // 저역 통과로 부드럽게 (각도라 최단 방향으로)
-        yaw = norm(prev + d * 0.25f)
+    }
+
+    /** 회전 행렬(기기→세계 동·북·위)에서 기기 -Z(화면 너머 정면)의 수평 방위. 고개를 60°+ 숙이거나 들면 null */
+    private fun forwardHeading(r: FloatArray): Float? {
+        val east = -r[2]
+        val north = -r[5]
+        val up = -r[8]
+        if (sqrt(east * east + north * north) < 0.5f || abs(up) > 0.87f) return null
+        return norm(Math.toDegrees(atan2(east, north).toDouble()).toFloat())
+    }
+
+    private fun lowPass(input: FloatArray, out: FloatArray, have: Boolean) {
+        for (i in 0..2) out[i] = if (have) out[i] + 0.2f * (input[i] - out[i]) else input[i]
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
