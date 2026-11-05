@@ -466,7 +466,7 @@ export function createApi(deps: ApiDeps) {
         if (!from) throw new HttpError(400, "from 또는 lat/lon 이 필요합니다");
         const { f, cands } = await findDestination(from, to);
         if (cands.length > 1 && chooser?.available) {
-          // 목적지와 대중교통 후보 모두 안경에서 고른다. 단축어 "목록에서 선택"이 비지 않게 한 줄을 준다
+          // 목적지와 대중교통 후보 모두 안경에서 고른다. 예전 단축어("목록에서 선택")가 비지 않게 한 줄을 준다
           log(`choose: ${to} → ${cands.length} candidates (transit)`);
           continueOnGlasses("선택", async () => {
             const i = await pickOnGlasses(`목적지 선택 · ${to}`, cands.map(candLabel));
@@ -503,14 +503,31 @@ export function createApi(deps: ApiDeps) {
           });
           return true;
         }
-        selectReply = null;
-        pendingTransit.set(plan);
-        reply({
-          from: plan.from.name,
-          to: plan.to.name,
-          options: plan.options.map(summarizeOption),
-          speech: plan.options.map(speakOption).join(". "),
-        });
+        // 경로 고르기는 안경에서만 (단축어는 목적지만 보낸다). 후보가 하나면 바로 시작
+        if (plan.options.length === 1) {
+          const speech = await startTransitOption(plan, 0);
+          selectReply = { at: Date.now(), speech: "안내 중입니다." };
+          pendingTransit.set(null);
+          reply({ ...summary(), options: ["① 안내 중"], speech });
+          return true;
+        }
+        if (chooser?.available) {
+          log(`choose: ${t.name} → ${plan.options.length} 경로 (안경)`);
+          continueOnGlasses("경로 선택", async () => {
+            const k = await pickOnGlasses(`경로 선택 · ${t.name}`, plan.options.map(summarizeOption), plan);
+            if (k === null) return null;
+            await startTransitOption(plan, k);
+            return `${t.name} 안내 시작`;
+          });
+          // 예전 단축어(목록에서 선택이 남아 있는 것)도 깨지지 않게 한 줄
+          reply({ choosing: true, to: t.name, options: ["① 안경에서 고르는 중"], speech: `${t.name}, 안경에서 경로를 고르세요. 가장 빠른 길은 ${speakOption(plan.options[0]!, 0).replace(/^1번, /, "")}.` });
+          return true;
+        }
+        // 안경이 연결돼 있지 않으면 가장 빠른 경로로 바로 시작 (단축어에서 고르지 않는다)
+        const speech = await startTransitOption(plan, 0);
+        selectReply = { at: Date.now(), speech: "안내 중입니다." };
+        pendingTransit.set(null);
+        reply({ ...summary(), options: ["① 안내 중"], speech: `안경이 연결돼 있지 않아 가장 빠른 경로로 안내합니다. ${speech.replace(/^1번 경로로 안내합니다\. /, "")}` });
         return true;
       }
 
