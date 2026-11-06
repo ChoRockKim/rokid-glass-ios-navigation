@@ -53,7 +53,7 @@ test("정류장 위치 기억: 두 번째부터는 카카오를 안 부르고, �
   assert.equal(cache.get(StopCache.key("bus", "241", "C")), undefined);
   // 파일로 남아 재시작해도 읽힌다
   cache.flush();
-  assert.ok(readFileSync(file, "utf8").includes("bus:241:B"));
+  assert.ok(readFileSync(file, "utf8").includes("v2:bus:241:B"));
   assert.equal(new StopCache(file).get(StopCache.key("bus", "241", "B"))?.[0], 127.0);
 });
 

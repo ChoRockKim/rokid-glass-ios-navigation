@@ -24,8 +24,9 @@ export class StopCache {
     }
   }
 
+  /** v2: 어림 위치 표시(approx)를 넣은 뒤. 그 전에 기억한 버스 위치는 어림인데 표시가 없어서 버린다 */
   static key(kind: string, line: string, name: string) {
-    return `${kind}:${line}:${name}`;
+    return `v2:${kind}:${line}:${name}`;
   }
 
   /** 찾은 위치, 못 찾음(null, 하루 안), 모름(undefined) */
