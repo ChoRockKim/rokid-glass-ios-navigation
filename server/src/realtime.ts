@@ -9,6 +9,7 @@ import { dispatcher } from "./proxy.js";
 import { faultOn, InjectedFault } from "./faults.js";
 import type { Arrival, GuideStep, RideInfo } from "./guide.js";
 import type { Navigator } from "./navigation.js";
+import { distanceM } from "./guide.js";
 
 export interface ArrivalProvider {
   name: string;
@@ -21,6 +22,47 @@ export async function getText(url: string): Promise<string> {
   const res = await fetch(url, { signal: AbortSignal.timeout(8000), dispatcher });
   const text = await res.text();
   if (!res.ok) throw new Error(`${new URL(url).host} ${res.status}: ${text.slice(0, 200)}`);
+  return text;
+}
+
+/**
+ * 공공데이터포털(서울 버스) 일일 호출 한도. 개발계정은 하루 횟수가 정해져 있어 넘으면
+ * 401 "유효하지 않은 서비스키입니다: 서비스 요청제한 횟수 초과 에러" (2026-11-06 실서버 로그에서 확인).
+ * 한 번 넘으면 다음 날 0시(한국 시간)까지 부르지 않는다 (계속 두드려 봐야 같은 오류)
+ */
+export class QuotaError extends Error {}
+const DAY_MS = 86_400_000;
+const KST_MS = 9 * 3_600_000;
+export const nextKstMidnight = (now: number) => Math.floor((now + KST_MS) / DAY_MS + 1) * DAY_MS - KST_MS;
+const isQuota = (text: string) => /요청제한 횟수 초과|LIMITED_NUMBER_OF_SERVICE_REQUESTS/.test(text);
+const busQuota = { blockedUntil: 0, day: 0, calls: 0 };
+
+/** 오늘(한국 시간) 버스 API 를 부른 횟수와 막힘 여부 (/status·로그용) */
+export function busUsage(now = Date.now()) {
+  return { calls: Math.floor((now + KST_MS) / DAY_MS) === busQuota.day ? busQuota.calls : 0, blockedUntil: busQuota.blockedUntil > now ? busQuota.blockedUntil : null };
+}
+export function resetBusQuota() {
+  Object.assign(busQuota, { blockedUntil: 0, day: 0, calls: 0 });
+}
+
+/** 버스 API 호출 (한도를 넘었으면 부르지 않고 QuotaError) */
+export async function busGet(url: string, now = Date.now): Promise<string> {
+  if (now() < busQuota.blockedUntil) throw new QuotaError("오늘 버스 조회 한도 초과");
+  const day = Math.floor((now() + KST_MS) / DAY_MS);
+  if (day !== busQuota.day) Object.assign(busQuota, { day, calls: 0 });
+  busQuota.calls++;
+  let text: string;
+  try {
+    text = await getText(url);
+  } catch (e) {
+    if (!isQuota(e instanceof Error ? e.message : String(e))) throw e;
+    text = "LIMITED_NUMBER_OF_SERVICE_REQUESTS";
+  }
+  // 200 으로 오류 XML 을 줄 때도 있다
+  if (text.length < 2000 && isQuota(text)) {
+    busQuota.blockedUntil = nextKstMidnight(now());
+    throw new QuotaError(`오늘 버스 조회 한도 초과 (오늘 ${busQuota.calls}번 호출)`);
+  }
   return text;
 }
 
@@ -120,7 +162,7 @@ export function seoulBusProvider(key: string, base = "http://ws.bus.go.kr/api/re
   async function items(path: string, params: Record<string, string>) {
     const q = new URLSearchParams({ ...params, resultType: "json" });
     // data.go.kr 키는 이미 인코딩된 형태로 줄 때가 있어 serviceKey 는 그대로 붙인다
-    const text = await getText(`${base}/${path}?serviceKey=${key}&${q}`);
+    const text = await busGet(`${base}/${path}?serviceKey=${key}&${q}`);
     const list = text.trim().startsWith("{") ? ((JSON.parse(text).msgBody?.itemList ?? []) as Record<string, string>[]) : xmlItems(text, "itemList");
     if (!list.length) debug?.(`bus debug ${path}: empty, head=${text.replace(/serviceKey=[^&"<]+/g, "serviceKey=***").slice(0, 300)}`);
     return list;
@@ -161,6 +203,7 @@ export function seoulBusProvider(key: string, base = "http://ws.bus.go.kr/api/re
 /** 실시간 실패 → 안경에 보여 줄 짧은 이유 */
 export function realtimeReason(e: unknown): string {
   const m = e instanceof Error ? e.message : String(e);
+  if (e instanceof QuotaError) return "오늘 버스 조회 한도 초과 (자정에 풀림)";
   if (/ 401|키|key/i.test(m)) return "실시간 정보 없음 (API 키 확인 필요)";
   if (/오류 주입/.test(m)) return "실시간 정보 없음 (오류 주입)";
   if (/Timeout|AbortError|fetch failed|ECONN|ETIMEDOUT|UND_ERR| 5\d\d/.test(m)) return "실시간 정보 없음 (서버 응답 없음)";
@@ -168,6 +211,17 @@ export function realtimeReason(e: unknown): string {
 }
 
 export const POLL_MS = Number(process.env.REALTIME_POLL_MS ?? 20_000);
+/**
+ * 탈 정류장에서 멀면 덜 자주 부른다 (2026-11-06: 정류장과 상관없이 20초마다 불러 버스 API 하루 한도를 다 씀).
+ * 500m 안 20초, 2km 안 1분, 더 멀면 3분. 위치가 10분 넘게 안 오면(폰이 위치를 안 보냄 = 안 쓰는 중) 5분
+ */
+export function pollInterval(nav: Navigator, ride: RideInfo, now = Date.now()): number {
+  const p = nav.lastKnownPosition;
+  if (!p || (p.ts !== undefined && now - p.ts > 10 * 60_000)) return 5 * 60_000;
+  if (!ride.boardPoint) return POLL_MS;
+  const d = distanceM([p.lon, p.lat], ride.boardPoint);
+  return d <= 500 ? POLL_MS : d <= 2000 ? 60_000 : 180_000;
+}
 const FAIL_BACKOFF_MS = 120_000;
 
 /** 활성 경로의 다음 탑승 구간을 주기적으로 조회한다. 탈 게 없으면 아무것도 안 부른다 */
@@ -180,12 +234,13 @@ export function startRealtimePoller(nav: Navigator, providers: ArrivalProvider[]
   let busy = false;
   let lastStep: GuideStep | null = null;
   let lastAt = 0;
+  let quotaLogged = false;
 
   const tick = async () => {
     const up = nav.upcomingRide();
     if (!up?.step.ride || busy) return;
     // 새 탑승 구간이면 바로, 아니면 POLL_MS 마다
-    if (up.step === lastStep && Date.now() - lastAt < POLL_MS) return;
+    if (up.step === lastStep && Date.now() - lastAt < pollInterval(nav, up.step.ride)) return;
     const provider = providers.find((p) => p.supports(up.step.ride!));
     if (!provider) return;
     busy = true;
@@ -196,9 +251,10 @@ export function startRealtimePoller(nav: Navigator, providers: ArrivalProvider[]
       nav.setArrivals(up.step, arrivals);
       log(`realtime ${provider.name} ${up.step.ride.board}: ${arrivals.filter((a) => a.mine !== false).slice(0, 3).map((a) => `${a.line} ${a.message} eta=${a.etaSec ?? "-"}`).join(" | ") || "없음"}`);
     } catch (e) {
-      // 키 미활성 등으로 계속 실패할 때 20초마다 두드리지 않도록 잠시 쉰다
+      // 키 미활성 등으로 계속 실패할 때 20초마다 두드리지 않도록 잠시 쉰다 (한도 초과면 busGet 이 자정까지 부르지 않음)
       lastAt = Date.now() + FAIL_BACKOFF_MS - POLL_MS;
-      log(`realtime ${provider.name} 실패 (${FAIL_BACKOFF_MS / 1000}s 뒤 재시도): ${e instanceof Error ? e.message : String(e)}`);
+      if (!(e instanceof QuotaError) || !quotaLogged) log(`realtime ${provider.name} 실패 (${FAIL_BACKOFF_MS / 1000}s 뒤 재시도): ${e instanceof Error ? e.message : String(e)}`);
+      quotaLogged = e instanceof QuotaError;
       // 안경에 이유를 알린다 (정보가 그냥 사라지지 않게)
       nav.setArrivalsError(up.step, realtimeReason(e));
     } finally {

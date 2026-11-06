@@ -2,7 +2,7 @@
 // 버스: 서울 정류소정보조회(getStationByPos → getStationByUid, 정류장의 모든 노선)
 // 지하철: 카카오 카테고리 검색(SW8)으로 가까운 역 → 서울 실시간 지하철(realtimeStationArrival, 역의 모든 열차)
 import { searchCategory } from "./kakao.js";
-import { getText, parseEta, shortSubwayMsg, stationName, SUBWAY_IDS, xmlItems } from "./realtime.js";
+import { busGet, getText, parseEta, QuotaError, shortSubwayMsg, stationName, SUBWAY_IDS, xmlItems } from "./realtime.js";
 
 export interface NearbyBoard {
   kind: "bus" | "subway";
@@ -45,18 +45,29 @@ function group(rows: { line: string; sec: number | null; text: string; exact?: b
 
 const short = (e: unknown) => {
   const m = e instanceof Error ? e.message : String(e);
+  if (e instanceof QuotaError) return "오늘 조회 한도 초과 (자정에 풀림)";
   if (/ 401/.test(m)) return "API 키 확인 필요 (401)";
   if (/오류 주입/.test(m)) return "실시간 정보 없음 (오류 주입)";
   if (/Timeout|AbortError|fetch failed|ECONN|ETIMEDOUT|UND_ERR| 5\d\d/.test(m)) return "서버 응답 없음";
   return m.slice(0, 60);
 };
 
+const STOPS_TTL_MS = 10 * 60_000;
+const stopsCache = new Map<string, { at: number; stops: Record<string, string>[] }>();
+
 export async function busBoard(lon: number, lat: number, key: string, base = "http://ws.bus.go.kr/api/rest"): Promise<NearbyBoard | null> {
   const items = async (path: string, params: Record<string, string>) => {
-    const text = await getText(`${base}/${path}?serviceKey=${key}&${new URLSearchParams({ ...params, resultType: "json" })}`);
+    const text = await busGet(`${base}/${path}?serviceKey=${key}&${new URLSearchParams({ ...params, resultType: "json" })}`);
     return text.trim().startsWith("{") ? ((JSON.parse(text).msgBody?.itemList ?? []) as Record<string, string>[]) : xmlItems(text, "itemList");
   };
-  const stops = await items("stationinfo/getStationByPos", { tmX: String(lon), tmY: String(lat), radius: String(BUS_RADIUS_M) });
+  // 가까운 정류장 목록은 약 30m 칸마다 10분 기억 (20초마다 새로고침할 때 호출을 반으로)
+  const cell = `${Math.round(lon * 3000)},${Math.round(lat * 3000)}`;
+  const hit = stopsCache.get(cell);
+  const stops = hit && Date.now() - hit.at < STOPS_TTL_MS ? hit.stops : await items("stationinfo/getStationByPos", { tmX: String(lon), tmY: String(lat), radius: String(BUS_RADIUS_M) });
+  if (!hit || hit.stops !== stops) {
+    stopsCache.set(cell, { at: Date.now(), stops });
+    if (stopsCache.size > 200) stopsCache.delete(stopsCache.keys().next().value!);
+  }
   const near = [...stops].sort((a, b) => Number(a.dist ?? 1e9) - Number(b.dist ?? 1e9))[0];
   if (!near?.arsId) return null;
   const list = await items("stationinfo/getStationByUid", { arsId: String(near.arsId) });

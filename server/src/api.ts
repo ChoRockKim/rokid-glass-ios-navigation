@@ -24,6 +24,7 @@ import { buildTransitGuide, pendingTransit, planTransit, routeCard, speakOption,
 import { distanceM } from "./guide.js";
 import { safeEqual, tokenFrom } from "./auth.js";
 import type { Pairing } from "./pairing.js";
+import { busUsage } from "./realtime.js";
 import { SttError, cleanSpoken, matchSaved, type Transcriber } from "./voice.js";
 
 const MAX_BODY = 5 * 1024 * 1024; // Overland 배치(최대 1000점) 여유
@@ -372,9 +373,12 @@ export function createApi(deps: ApiDeps) {
 
   function summary() {
     const a = nav.current;
-    if (!a) return { active: false, message: messageFor(null) };
+    // 버스 API 오늘 호출 수 (공공데이터포털 하루 한도 확인용)
+    const busApi = busUsage();
+    if (!a) return { active: false, message: messageFor(null), busApi };
     return {
       active: true,
+      busApi,
       from: a.from.name,
       to: a.to.name,
       distance: a.route.totalDistance,
