@@ -12,6 +12,7 @@ import { Chooser } from "./chooser.js";
 import { Favorites } from "./favorites.js";
 import { nearbyBoards } from "./nearby.js";
 import { Recent } from "./recent.js";
+import { clovaSpeech } from "./voice.js";
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -69,15 +70,21 @@ nav.onChange((m) => log(`nav -> ${m.type}${m.type === "step" ? ` ${m.index + 1}/
 
 let slack: Awaited<ReturnType<typeof startSlack>> | null = null;
 
+/** 안경 음성 검색 (CLOVA Speech). 둘 다 있을 때만 켠다 */
+const CLOVA_SPEECH_INVOKE_URL = process.env.CLOVA_SPEECH_INVOKE_URL ?? "";
+const CLOVA_SPEECH_SECRET = process.env.CLOVA_SPEECH_SECRET ?? "";
+const stt = CLOVA_SPEECH_INVOKE_URL && CLOVA_SPEECH_SECRET ? clovaSpeech(CLOVA_SPEECH_INVOKE_URL, CLOVA_SPEECH_SECRET) : undefined;
+if (!stt) log("CLOVA_SPEECH_INVOKE_URL/SECRET 이 없어 안경 음성 검색을 끕니다");
+
 const api = API_TOKEN
-  ? createApi({ nav, apiToken: API_TOKEN, kakaoKey: KAKAO_REST_KEY, log, notify: (t) => slack?.notify(t), pairing: new Pairing(GLASS_TOKEN), chooser, favorites, recents })
+  ? createApi({ nav, apiToken: API_TOKEN, kakaoKey: KAKAO_REST_KEY, log, notify: (t) => slack?.notify(t), pairing: new Pairing(GLASS_TOKEN), chooser, favorites, recents, stt })
   : undefined;
 if (!api) log("API_TOKEN 이 없어 폰용 HTTP API(/location, /route, /nav, /status)를 끕니다");
 
 const roads = new RoadFeed(nav, log);
 /** 안경 APK 보관 폴더 (Railway 볼륨 /data). 업로드 토큰이 없으면 업로드만 막힌다 */
 const ota = new Ota(process.env.APP_DIR ?? "/data/app", process.env.OTA_UPLOAD_TOKEN ?? "", [GLASS_TOKEN, GLASS_DEVICE_TOKEN].filter(Boolean), log);
-const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, extraTokens: GLASS_DEVICE_TOKEN ? [GLASS_DEVICE_TOKEN] : [], nav, log, api, onPositions: api?.ingest, onReroute: api?.rerouteNow, roads, ota, chooser, favorites: api ? { list: api.favoritesForGlasses, go: api.goFavorite } : undefined,
+const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, extraTokens: GLASS_DEVICE_TOKEN ? [GLASS_DEVICE_TOKEN] : [], nav, log, api, onPositions: api?.ingest, onReroute: api?.rerouteNow, roads, ota, chooser, favorites: api ? { list: api.favoritesForGlasses, go: api.goFavorite } : undefined, voice: api?.goVoice,
   nearby: () => nearbyBoards(nav.lastKnownPosition, { kakao: KAKAO_REST_KEY, bus: process.env.DATA_GO_KR_KEY, subway: process.env.SEOUL_SUBWAY_KEY }, log) });
 const stopPoller = startRealtimePoller(nav, providersFromEnv(log), log);
 

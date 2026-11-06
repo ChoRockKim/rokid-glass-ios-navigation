@@ -2,6 +2,8 @@ package com.chorock.rokidroute
 
 import android.app.Activity
 import android.content.Context
+import android.content.pm.PackageManager
+import android.util.Base64
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -195,6 +197,7 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        if (voice.active) { voice.cancel(); hud.voiceModal = null }
         runCatching { unregisterReceiver(batteryReceiver) }
         runCatching { connectivity.unregisterNetworkCallback(netCallback) }
         client.stop()
@@ -237,6 +240,7 @@ class MainActivity : Activity() {
         }
         hud.state = next
         if (m.optString("type") == "idle" || m.optString("type") == "arrived") hud.post { maybeAutoInstall() }
+        if (voiceWaiting && m.optString("type") in setOf("choose", "notice")) endVoiceWait()
         when (m.optString("type")) {
             // 메뉴 "경로 다시 찾기" 결과 (이 안경에만 온다)
             "notice" -> showNotice(m.optString("text"))
@@ -385,12 +389,60 @@ class MainActivity : Activity() {
         }
     }
 
+    // ── 말해서 찾기: 안경 마이크 → 서버(CLOVA Speech) → "들은 말" 제목의 후보를 안경에서 고름 ──
+    private val voice by lazy {
+        VoiceRecorder(
+            onLevel = { lv -> hud.voiceModal?.takeIf { it.level != null }?.let { hud.voiceModal = it.copy(level = lv) } },
+            onDone = ::onVoiceRecorded,
+        )
+    }
+    /** 녹음을 보내고 서버 답(후보 또는 알림)을 기다리는 중 */
+    private var voiceWaiting = false
+    private val voiceTimeout = Runnable { if (voiceWaiting) { endVoiceWait(); showNotice("음성 검색 응답 없음 · 다시 시도") } }
+
+    private fun startVoice() {
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            hud.menu = hud.menu?.copy(note = "마이크 권한을 허용해 주세요")
+            requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), REQ_MIC)
+            return
+        }
+        if (!client.connected) { hud.menu = hud.menu?.copy(note = "연결 끊김 · 음성 검색은 연결돼 있어야 함"); return }
+        sub = null
+        hud.menu = null
+        if (!voice.start()) { showNotice("마이크를 열지 못함"); return }
+        hud.voiceModal = HudView.WifiModal("듣는 중", "목적지를 말하세요 · 탭 = 끝 · 뒤로 = 취소", level = 0f)
+    }
+
+    private fun onVoiceRecorded(wav: ByteArray?) {
+        if (wav == null) { hud.voiceModal = null; showNotice("말소리를 못 들었어요 · 다시 시도"); return }
+        val json = JSONObject().put("type", "voice").put("audio", Base64.encodeToString(wav, Base64.NO_WRAP))
+        if (!client.send(json)) { hud.voiceModal = null; showNotice("연결 끊김 · 다시 시도"); return }
+        voiceWaiting = true
+        hud.voiceModal = HudView.WifiModal("알아듣는 중", "잠시만요 · 후보가 뜨면 골라 주세요")
+        hud.removeCallbacks(voiceTimeout)
+        hud.postDelayed(voiceTimeout, 25_000)
+    }
+
+    private fun endVoiceWait() {
+        voiceWaiting = false
+        hud.removeCallbacks(voiceTimeout)
+        hud.voiceModal = null
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQ_MIC) return
+        if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) startVoice()
+        else showNotice("마이크 권한이 없어 말해서 찾기를 못 씀")
+    }
+
     /** 지금 띄운 선택지 번호 (서버 choose id). null 이면 일반 메뉴 */
     private var choosing: Int? = null
 
     companion object {
         /** 목적지 화면의 "최근" 카테고리 이름 */
         const val RECENT = "최근"
+        private const val REQ_MIC = 7
     }
 
     /** 끊겨 있으면 모아 두었다가 연결되면 보낸다 (30초 지나면 버림). 바로 못 보냈으면 알림 */
@@ -447,12 +499,12 @@ class MainActivity : Activity() {
      *   설정 ▸: 지도 표시 / 방향 다시 맞추기 / 업데이트
      *   목적지 ▸: 최근 (n) / 즐겨찾기 카테고리들 → 장소 → 바로 안내
      */
-    enum class Item { BACK_TO_NAV, DEST, NEARBY, SETTINGS, STOP, REROUTE, RECALIBRATE, MAP_MODE, UPDATE, EXIT }
+    enum class Item { BACK_TO_NAV, DEST, VOICE, NEARBY, SETTINGS, STOP, REROUTE, RECALIBRATE, MAP_MODE, UPDATE, EXIT }
 
     private val navigating get() = !hud.state.idle && hud.state.progress.isNotEmpty()
 
     private fun mainItems() = listOfNotNull(
-        Item.BACK_TO_NAV, Item.REROUTE.takeIf { navigating }, Item.DEST, Item.NEARBY,
+        Item.BACK_TO_NAV, Item.REROUTE.takeIf { navigating }, Item.VOICE, Item.DEST, Item.NEARBY,
         Item.STOP.takeIf { navigating }, Item.SETTINGS, Item.EXIT,
     )
 
@@ -470,6 +522,7 @@ class MainActivity : Activity() {
     private fun label(item: Item): String = when (item) {
         Item.BACK_TO_NAV -> if (navigating) "길안내 화면으로" else "화면 닫기"
         Item.DEST -> "목적지 ▸"
+        Item.VOICE -> "말해서 찾기"
         Item.SETTINGS -> "설정 ▸" + if (updater.available != null) "  ●" else ""
         Item.NEARBY -> "버스·지하철 시간"
         Item.STOP -> "안내 종료"
@@ -491,6 +544,16 @@ class MainActivity : Activity() {
     private var stopArmed = false
 
     fun handle(input: Input) {
+        if (voice.active) {
+            // 듣는 중: 탭 = 끝내고 보내기, 뒤로 = 취소
+            when (input) {
+                Input.SELECT -> voice.stop()
+                Input.BACK -> { voice.cancel(); hud.voiceModal = null; showNotice("말해서 찾기 취소") }
+                else -> {}
+            }
+            return
+        }
+        if (voiceWaiting && input == Input.BACK) { endVoiceWait(); return }
         val m = hud.menu
         val chooseId = choosing
         if (m != null && chooseId != null) {
@@ -540,6 +603,7 @@ class MainActivity : Activity() {
         when (item) {
             Item.BACK_TO_NAV -> { sub = null; hud.menu = null }
             Item.SETTINGS -> showSub(Sub.Group(Item.SETTINGS, listOf(Item.MAP_MODE, Item.RECALIBRATE, Item.UPDATE)), 0)
+            Item.VOICE -> startVoice()
             Item.DEST -> {
                 // 저장해 둔 목록이 있으면 바로 보여 주고, 새 목록을 받으면 바꾼다
                 val saved = cache.favorites()

@@ -24,6 +24,7 @@ import { buildTransitGuide, pendingTransit, planTransit, routeCard, speakOption,
 import { distanceM } from "./guide.js";
 import { safeEqual, tokenFrom } from "./auth.js";
 import type { Pairing } from "./pairing.js";
+import { SttError, cleanSpoken, matchSaved, type Transcriber } from "./voice.js";
 
 const MAX_BODY = 5 * 1024 * 1024; // Overland 배치(최대 1000점) 여유
 /** 연속 이탈이 이만큼이면 현재 위치에서 재탐색 */
@@ -49,6 +50,8 @@ export interface ApiDeps {
   favorites?: Favorites;
   /** 최근 목적지 (길안내를 시작할 때마다 기록) */
   recents?: Recent;
+  /** 음성 → 글자 (없으면 안경 음성 검색 끔) */
+  stt?: Transcriber;
 }
 
 class HttpError extends Error {
@@ -115,7 +118,7 @@ export function parsePositions(body: unknown): Position[] | null {
 }
 
 export function createApi(deps: ApiDeps) {
-  const { nav, apiToken, kakaoKey, log, notify, pairing, chooser, favorites, recents } = deps;
+  const { nav, apiToken, kakaoKey, log, notify, pairing, chooser, favorites, recents, stt } = deps;
 
   const pt = (p: Place) => ({ lon: p.x, lat: p.y, name: p.name });
   const candLabel = (c: PlaceCandidate) => (c.distance === null ? c.name : `${c.name} · ${formatDistance(c.distance)}`);
@@ -218,6 +221,12 @@ export function createApi(deps: ApiDeps) {
     const f: Place = { name: "현재 위치", address: "", x: p.lon, y: p.lat };
     const t: Place = { name: fav.name, address: fav.address, x: fav.x, y: fav.y };
     log(`${id.startsWith("r:") ? "recent" : "favorite"}: ${fav.name} (${mode})`);
+    return goPlace(f, t, mode);
+  }
+
+  /** 현재 위치에서 t 로 안내 시작: 가까우면 도보, 멀면 대중교통 후보를 안경에서 고름. 결과 문장 */
+  async function goPlace(f: Place, t: Place, mode: "walk" | "transit"): Promise<string> {
+    const fav = t;
     if (mode === "walk") {
       await startWalk(f, t);
       return `${fav.name} 도보 안내 시작`;
@@ -231,6 +240,49 @@ export function createApi(deps: ApiDeps) {
     if (k === null) return "경로 선택 취소";
     await startTransitOption(plan, k);
     return `${fav.name} 안내 시작`;
+  }
+
+  /**
+   * 안경 마이크로 말한 목적지. 글자로 바꾼 뒤 즐겨찾기·최근 목적지에서 닮은 것(★) + 카카오 검색 후보를
+   * "들은 말: …" 제목으로 안경에 띄워 고르게 한다 (잘못 알아들었으면 뒤로 = 취소하고 다시 말하기).
+   * 후보가 하나여도 확인을 받는다. 고르면 즐겨찾기와 같은 규칙 (가까우면 도보, 멀면 대중교통)
+   */
+  async function goVoice(audio: Buffer): Promise<string> {
+    if (!stt) return "서버에 음성 인식 키가 없음";
+    const saved = [
+      ...(favorites?.list() ?? []).map((x) => ({ name: x.name, address: x.address, x: x.x, y: x.y })),
+      ...(recents?.list() ?? []).map((x) => ({ name: x.name, address: x.address, x: x.x, y: x.y })),
+    ];
+    let heard: string;
+    try {
+      heard = await stt(audio, saved.map((x) => x.name));
+    } catch (e) {
+      log(`voice: ${e instanceof Error ? e.message : String(e)}`);
+      return e instanceof SttError ? e.message : "음성 인식 실패";
+    }
+    const spoken = cleanSpoken(heard);
+    log(`voice: "${heard}" → "${spoken}"`);
+    if (!spoken) return "못 알아들었어요 · 다시 말해 주세요";
+    const p = nav.lastKnownPosition;
+    if (!p) return `들은 말 "${spoken}" · 현재 위치 없음 (Overland 확인)`;
+    const f: Place = { name: "현재 위치", address: "", x: p.lon, y: p.lat };
+    const mine = matchSaved(spoken, saved.filter((x, i) => saved.findIndex((y) => y.name === x.name) === i));
+    let found: PlaceCandidate[] = [];
+    try {
+      found = await searchPlaces(spoken, kakaoKey, { lon: p.lon, lat: p.lat });
+    } catch (e) {
+      if (!(e instanceof KakaoError)) throw e;
+    }
+    const near = (x: Place) => Math.round(distanceM([p.lon, p.lat], [x.x, x.y]));
+    const options: { place: Place; label: string }[] = [
+      ...mine.map((x) => ({ place: x as Place, label: `★ ${x.name} · ${formatDistance(near(x))}` })),
+      ...found.filter((c) => !mine.some((m) => m.name === c.name)).map((c) => ({ place: c as Place, label: candLabel(c) })),
+    ].slice(0, 6);
+    if (!options.length) return `"${spoken}" 을(를) 찾지 못함 · 다시 말해 주세요`;
+    if (!chooser?.available) return "안경 화면 연결 없음";
+    const i = await pickOnGlasses(`들은 말: "${spoken}"`, options.map((o) => o.label));
+    if (i === null) return "취소 · 다시 말하려면 메뉴 > 말해서 찾기";
+    return goPlace(f, options[i]!.place, "transit");
   }
 
   /**
@@ -626,5 +678,5 @@ export function createApi(deps: ApiDeps) {
     }
     return false;
   };
-  return Object.assign(handle, { ingest, rerouteNow, favoritesForGlasses, goFavorite });
+  return Object.assign(handle, { ingest, rerouteNow, favoritesForGlasses, goFavorite, goVoice });
 }

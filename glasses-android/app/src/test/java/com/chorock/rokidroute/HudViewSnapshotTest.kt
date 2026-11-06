@@ -45,7 +45,7 @@ class HudViewSnapshotTest {
         v.clock = { T0 }
         v.device = HudView.Device(battery = 64, network = "Wi-Fi", server = true)
         v.update = "0.3.3"
-        v.menu = HudView.Menu(listOf("길안내 화면으로", "경로 다시 찾기", "목적지 ▸", "버스·지하철 시간", "안내 종료", "설정 ▸  ●", "앱 종료"), selected = 1)
+        v.menu = HudView.Menu(listOf("길안내 화면으로", "경로 다시 찾기", "말해서 찾기", "목적지 ▸", "버스·지하철 시간", "안내 종료", "설정 ▸  ●", "앱 종료"), selected = 1)
         paparazzi.snapshot(v, "09_menu")
     }
 
@@ -205,6 +205,20 @@ class HudViewSnapshotTest {
         v.wifiModal = HudView.WifiModal("Wi-Fi 연결 중", "iPhone 핫스팟을 켜 두면 자동으로 연결돼요")
         v.state = HudState()
         paparazzi.snapshot(v, "29_wifi_waiting_idle")
+    }
+
+    /** 말해서 찾기: 듣는 중(음량 막대) → 들은 말 제목의 후보 (★ = 즐겨찾기) */
+    @Test
+    fun voiceSearch() {
+        val v = HudView(paparazzi.context) { null }
+        v.clock = { T0 }
+        v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
+        v.state = HudState()
+        v.voiceModal = HudView.WifiModal("듣는 중", "목적지를 말하세요 · 탭 = 끝 · 뒤로 = 취소", level = 0.55f)
+        paparazzi.snapshot(v, "30_voice_listening")
+        v.voiceModal = null
+        v.menu = HudView.Menu(listOf("★ 회기역 맥도날드 · 350m", "회기역 1호선 · 220m", "회기역 경의중앙선 · 260m"), 0, title = "들은 말: \"회기역\"", hint = "쓸기 이동 · 탭 선택 · 뒤로 취소")
+        paparazzi.snapshot(v, "31_voice_choose")
     }
 
     /** 폰에서 "맥도날드"로 시작 → 안경에서 지점 고르기 (서버 /route 를 실제 카카오로 돌려 받은 목록) */

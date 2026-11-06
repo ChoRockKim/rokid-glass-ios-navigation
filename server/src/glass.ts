@@ -9,6 +9,7 @@ import { PLACES_HTML } from "./places.js";
 import type { RoadFeed } from "./roads.js";
 import type { Ota } from "./ota.js";
 import type { Chooser } from "./chooser.js";
+import { VOICE_MAX_BYTES } from "./voice.js";
 
 /** 이 간격으로 ping, 다음 ping 때까지 pong 이 없으면 끊는다 (최대 2배 시간 안에 정리) */
 export const HEARTBEAT_MS = Number(process.env.GLASS_HEARTBEAT_MS ?? 15_000);
@@ -34,6 +35,8 @@ export function startGlassServer(opts: {
   favorites?: { list: () => unknown; go: (id: string, mode: "walk" | "transit") => Promise<string> };
   /** 안경 메뉴 "버스·지하철 시간": 지금 위치 주변 정류장·역 실시간 도착 */
   nearby?: () => Promise<unknown>;
+  /** 안경 마이크 음성(WAV)으로 목적지 찾기 → 결과 문장 */
+  voice?: (audio: Buffer) => Promise<string>;
   /** 목적지 후보 선택지. ?choose=1 로 연결한 화면(안경 APK)에만 띄운다 */
   chooser?: Chooser;
 }): Server {
@@ -149,6 +152,18 @@ export function startGlassServer(opts: {
             return "경로 찾기 실패";
           })
           .then((text) => send(ws, { type: "notice", text }));
+      } else if (msg.type === "voice") {
+        const b64 = typeof msg.audio === "string" ? msg.audio : "";
+        const audio = Buffer.from(b64, "base64");
+        if (!opts.voice) send(ws, { type: "notice", text: "서버에서 음성 검색을 지원하지 않음" });
+        else if (audio.length < 1000 || audio.length > VOICE_MAX_BYTES) send(ws, { type: "notice", text: "음성이 너무 짧거나 김" });
+        else
+          void opts.voice(audio)
+            .catch((e) => {
+              log(`voice failed: ${e instanceof Error ? e.message : String(e)}`);
+              return "음성 검색 실패";
+            })
+            .then((text) => send(ws, { type: "notice", text }));
       } else if (msg.type === "chosen") opts.chooser?.answer(Number(msg.id), Number(msg.index));
       else if (msg.type === "stop") {
         log("glass: stop");

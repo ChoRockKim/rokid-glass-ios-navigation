@@ -147,8 +147,13 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         set(value) { field = value; invalidate() }
 
     /** Wi-Fi 를 켜는·기다리는 중이면 가운데 작은 모달 (제목, 설명). 붙으면 null */
-    data class WifiModal(val title: String, val detail: String)
+    /** level: 0~1 이면 아래에 마이크 음량 막대 (말해서 찾기) */
+    data class WifiModal(val title: String, val detail: String, val level: Float? = null)
     var wifiModal: WifiModal? = null
+        set(value) { field = value; invalidate() }
+
+    /** 말해서 찾기: 듣는 중·알아듣는 중 모달 (Wi-Fi 모달보다 위) */
+    var voiceModal: WifiModal? = null
         set(value) { field = value; invalidate() }
 
     /** 시계 (테스트에서 바꿈) */
@@ -384,7 +389,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
             leftEnd += tiny.measureText("© OpenStreetMap")
         }
         drawDeviceStatus(canvas, bottom, s.status, leftEnd + 12f)
-        wifiModal?.let { drawWifiModal(canvas, it, now) }
+        (voiceModal ?: wifiModal)?.let { drawWifiModal(canvas, it, now) }
         canvas.restore()
 
         // 위치가 미끄러지는 중이거나 센서 방향을 쓰면 계속 다시 그림. 길안내 중이면 1초마다 (위치 경과 시간 갱신)
@@ -570,6 +575,14 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         canvas.drawText(title, 0, title.length, r.left + 56f, r.top + 31f, modalTitle)
         val l = layoutOf(m.detail, modalText, (w - 36f).toInt(), 2, Layout.Alignment.ALIGN_NORMAL)
         if (l != null) { canvas.save(); canvas.translate(r.left + 18f, r.top + 42f); l.draw(canvas); canvas.restore() }
+        m.level?.let { lv ->
+            // 마이크 음량: 아래 테두리 안쪽에 얇은 막대
+            val x0 = r.left + 18f; val x1 = r.right - 18f; val y = r.bottom - 9f
+            modalDot.alpha = 60
+            canvas.drawRect(x0, y - 1.5f, x1, y + 1.5f, modalDot)
+            modalDot.alpha = 255
+            canvas.drawRect(x0, y - 1.5f, x0 + (x1 - x0) * lv.coerceIn(0f, 1f), y + 1.5f, modalDot)
+        }
         postInvalidateDelayed(400)
     }
 

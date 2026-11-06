@@ -23,6 +23,8 @@ Railway 화면 구성은 바뀔 수 있다. 아래 메뉴 이름은 작성 시�
 | `API_TOKEN` | 폰(단축어·Overland)용. 새로 만들 것: `openssl rand -hex 16` |
 | `SEOUL_SUBWAY_KEY` | (선택) 서울 열린데이터광장 |
 | `DATA_GO_KR_KEY` | (선택) 공공데이터포털, Decoding 키 |
+| `CLOVA_SPEECH_INVOKE_URL` | (선택) 안경 "말해서 찾기". 네이버 클라우드 CLOVA Speech 도메인 → 빌더 → Invoke URL |
+| `CLOVA_SPEECH_SECRET` | (선택) 같은 곳의 Secret Key. 두 값이 다 있어야 켜진다 |
 
 `HTTPS_PROXY` 는 넣지 않는다 (클라우드 세션 전용).
 
