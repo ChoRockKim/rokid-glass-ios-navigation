@@ -1,7 +1,7 @@
 // 진행 상태. 개인용이라 활성 경로는 하나만 둔다.
 // 진행은 두 가지로 바뀐다: 수동(안경 탭, /route next) 과 위치(POST /location).
 import type { LonLat, Place, WalkRoute } from "./kakao.js";
-import { buildGuide, distanceM, formatDistance, line2For, type Arrival, type GuideStep, type RideInfo, type Turn } from "./guide.js";
+import { buildGuide, distanceM, formatDistance, line2For, type Arrival, type GuideStep, type RideInfo, type StopMark, type Turn } from "./guide.js";
 import { RouteTracker } from "./tracking.js";
 
 export { formatDistance };
@@ -78,6 +78,8 @@ export type GlassMessage =
         error?: string;
         /** 하차 알림: soon = 다음 정류장(역)에서, now = 이번에 내림. 안경은 테두리를 깜빡인다 */
         alightAlert?: "soon" | "now";
+        /** 탄 뒤: 다음에 설 정류장(역) 이름 (정류장 위치를 찾았을 때만). 안경은 지도에서 그 점 옆에 이름을 쓴다 */
+        nextStop?: string;
       };
       /** 탈 정류장·역 근처(AT_STOP_M)에서 아직 안 탔으면 그곳의 실시간 도착. 안경 간소 화면이 오른쪽에 보여 준다 */
       stop?: StopBoard;
@@ -92,6 +94,8 @@ export type MapMessage =
       segments: { kind: "walk" | "bus" | "subway"; points: [number, number][] }[];
       turns: [number, number][]; // 각 단계 시작점 (단계 index 와 같은 순서)
       steps?: { line1: string; line2: string }[];
+      /** 버스·지하철 구간의 정류장·역 (위치를 찾은 것만). step = 단계 번호 */
+      stops?: { step: number; name: string; lon: number; lat: number }[];
     }
   | {
       type: "map-pos";
@@ -215,6 +219,11 @@ export const ALIGHT_SOON_M = 600;
 /** 이 안이면 "이번 정류장에서 하차" */
 export const ALIGHT_NOW_M = 150;
 
+/** 찾은 정류장이 버스 경로선에서 이보다 멀면 다른 곳으로 본다 */
+const STOP_MAX_OFFSET_M = 120;
+/** 정류장 지점을 이만큼 지나면 지난 것으로 본다 */
+const PASSED_M = 20;
+
 /** 탑승으로 볼 진행 거리 (정류장에서 이만큼 지나면 탄 것으로 본다) */
 const BOARDED_M = 80;
 /** 이보다 오래된 실시간 정보는 안 쓴다 */
@@ -246,15 +255,19 @@ function rideView(a: ActiveRoute, step: GuideStep, now: number) {
   const boarded = into > BOARDED_M;
   const remaining = remainingOf(a) ?? step.distance;
   const stopsTotal = Math.max(1, r.stops.length - 1);
-  // 정류장 좌표가 없어 거리 비율로 추정한다
-  const stopsLeft = boarded ? Math.max(1, Math.ceil((stopsTotal * remaining) / len)) : stopsTotal;
+  // 정류장 위치를 찾았으면 지난 정류장을 세고, 못 찾았으면 거리 비율로 추정한다
+  const marks = r.marks && r.marks.length >= 2 && a.realIndex === a.index ? r.marks : null;
+  const ahead = marks && a.progress !== null ? marks.filter((m) => m.s > a.progress! + PASSED_M) : null;
+  const nextStop = boarded && ahead?.length ? ahead[0]!.name : undefined;
+  const stopsLeft = boarded ? (ahead ? Math.max(1, ahead.length) : Math.max(1, Math.ceil((stopsTotal * remaining) / len))) : stopsTotal;
   const icon = r.kind === "bus" ? "[버스]" : "[지하철]";
   const name = r.lines.slice(0, 3).join("/");
   const fresh = r.live && r.liveAt !== null && now - r.liveAt < LIVE_MAX_AGE_MS;
   const arrivals = fresh ? r.live!.filter((a) => a.mine !== false).sort((x, y) => (x.etaSec ?? 1e9) - (y.etaSec ?? 1e9)) : [];
   // 하차 알림 (화면만): 남은 정거장이 1이거나 하차 지점까지 ALIGHT_SOON_M 안 → 다음 정류장 하차, ALIGHT_NOW_M 안 → 이번 정류장 하차
   const stopWord = r.kind === "bus" ? "정류장" : "역";
-  const alight: "soon" | "now" | null = !boarded ? null : remaining <= ALIGHT_NOW_M ? "now" : stopsLeft <= 1 || remaining <= ALIGHT_SOON_M ? "soon" : null;
+  // 정류장 위치를 알면 남은 정거장 수로만 (도심에선 600m 가 두 정거장일 수 있음)
+  const alight: "soon" | "now" | null = !boarded ? null : remaining <= ALIGHT_NOW_M ? "now" : stopsLeft <= 1 || (!ahead && remaining <= ALIGHT_SOON_M) ? "soon" : null;
   const line1 = alight === "now"
     ? `${icon} 이번 ${stopWord}에서 하차`
     : alight === "soon"
@@ -264,13 +277,18 @@ function rideView(a: ActiveRoute, step: GuideStep, now: number) {
     : arrivals.length
       ? `${icon} ${arrivalsText(arrivals.slice(0, 2))}`
       : `${icon} ${name} 탑승 · ${r.board}`;
-  const line2 = boarded ? `${r.alight} 하차 · 약 ${stopsLeft}정거장` : `${r.board} → ${r.alight} · ${stopsTotal}정거장`;
+  const line2 = !boarded
+    ? `${r.board} → ${r.alight} · ${stopsTotal}정거장`
+    : nextStop && stopsLeft > 1
+      ? `다음 ${nextStop} · ${r.alight} 하차 · ${stopsLeft}정거장`
+      : `${r.alight} 하차 · ${ahead ? "" : "약 "}${stopsLeft}정거장`;
   return {
     line1,
     line2,
     ride: {
       kind: r.kind, lines: r.lines, board: r.board, alight: r.alight, boarded, stopsLeft, arrivals,
       ...(alight ? { alightAlert: alight } : {}),
+      ...(nextStop ? { nextStop } : {}),
       ...(!boarded && !arrivals.length && r.liveError ? { error: r.liveError.text } : {}),
     },
   };
@@ -449,6 +467,7 @@ export class Navigator {
       turns: a.guide.map((g) => q(g.points[0] ?? [0, 0])),
       // 연결이 끊겨도 안경이 링으로 단계 문구를 넘겨 볼 수 있게 (단계 시작 시점 문구)
       steps: a.guide.map((g) => ({ line1: g.line1, line2: g.line2 })),
+      stops: a.guide.flatMap((g, step) => (g.ride?.marks ?? []).map((m) => ({ step, name: m.name, lon: m.lon, lat: m.lat }))),
     };
   }
 
@@ -516,6 +535,42 @@ export class Navigator {
     if (p0) this.emitMap({ type: "map-pos", ...p0, snapped: true, estimated: true, next: guide.length > 1 ? 1 : null });
     this.emit();
     this.save();
+    this.locateStops(this.active);
+  }
+
+  /**
+   * 버스·지하철 구간 정류장 위치 찾기 (index.ts 가 카카오 검색으로 채운다). 없으면 정류장 점 없이 안내.
+   * 찾은 위치는 그 구간 경로선 위로 옮겨 놓는다 (경로선에서 멀면 버림)
+   */
+  stopLocator: ((ride: RideInfo, points: [number, number][]) => Promise<({ lon: number; lat: number } | null)[]>) | null = null;
+
+  private locateStops(a: ActiveRoute) {
+    const find = this.stopLocator;
+    if (!find) return;
+    a.guide.forEach((g, i) => {
+      const r = g.ride;
+      if (!r || r.marks || r.stops.length < 2) return;
+      void find(r, g.points)
+        .then((found) => {
+          if (this.active !== a) return;
+          const lo = a.tracker.stepStart[i] ?? 0;
+          const hi = a.tracker.stepEnd[i] ?? lo;
+          const marks: StopMark[] = [];
+          r.stops.forEach((name, k) => {
+            const f = found[k];
+            const p = f ? a.tracker.projectIn([f.lon, f.lat], lo, hi) : null;
+            if (!p || p.offset > STOP_MAX_OFFSET_M) return;
+            if (marks.length && p.s < marks[marks.length - 1]!.s) return; // 순서가 뒤집히면 잘못 찾은 것
+            const at = a.tracker.pointAt(p.s)!;
+            marks.push({ name, lon: Math.round(at.lon * 1e6) / 1e6, lat: Math.round(at.lat * 1e6) / 1e6, s: Math.round(p.s) });
+          });
+          r.marks = marks;
+          this.emitMap(this.routeMap(a));
+          this.emit(false);
+          this.save();
+        })
+        .catch(() => {});
+    });
   }
 
   /** 재탐색: 목적지는 그대로, 경로만 바꾼다 */

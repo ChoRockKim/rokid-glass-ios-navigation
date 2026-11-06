@@ -86,6 +86,26 @@ export class RouteTracker {
     return search(-Infinity, Infinity);
   }
 
+  /** [lo, hi] 구간(진행 거리)에서만 가장 가까운 점 (정류장을 그 버스 구간 위에 놓을 때) */
+  projectIn(p: LonLat, lo: number, hi: number): Projection | null {
+    if (this.xy.length < 2) return null;
+    const q = this.toXY(p);
+    let best: Projection | null = null;
+    for (let i = 1; i < this.xy.length; i++) {
+      if (this.cum[i]! < lo || this.cum[i - 1]! > hi) continue;
+      const a = this.xy[i - 1]!;
+      const b = this.xy[i]!;
+      const dx = b[0] - a[0];
+      const dy = b[1] - a[1];
+      const len2 = dx * dx + dy * dy;
+      const t = len2 ? Math.max(0, Math.min(1, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / len2)) : 0;
+      const offset = Math.hypot(q[0] - (a[0] + t * dx), q[1] - (a[1] + t * dy));
+      const s = Math.max(lo, Math.min(hi, this.cum[i - 1]! + t * Math.sqrt(len2)));
+      if (!best || offset < best.offset) best = { s, offset };
+    }
+    return best;
+  }
+
   /** 진행 거리 s 지점의 좌표(경도, 위도)와 진행 방위(도, 북=0, 시계방향) */
   pointAt(s: number): { lon: number; lat: number; heading: number } | null {
     if (this.xy.length < 2) return null;

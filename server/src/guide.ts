@@ -17,6 +17,14 @@ export interface Arrival {
   mine?: boolean;
 }
 
+/** 지나는 정류장 하나 (지도에 점으로) */
+export interface StopMark {
+  name: string;
+  lon: number;
+  lat: number;
+  s: number;
+}
+
 /** 버스·지하철 구간 */
 export interface RideInfo {
   kind: "bus" | "subway";
@@ -29,6 +37,11 @@ export interface RideInfo {
   liveAt: number | null; // 갱신 시각 (ms)
   /** 마지막 실시간 조회가 실패했으면 그 이유와 시각 (성공하면 지운다) */
   liveError?: { text: string; at: number } | null;
+  /**
+   * 지나는 정류장·역의 위치 (카카오 검색으로 찾은 것만, 탑승·하차 포함). s = 경로 진행 거리.
+   * 카카오 대중교통 응답에는 정류장 이름만 있어서 경로를 시작한 뒤 따로 찾아 채운다
+   */
+  marks?: StopMark[];
 }
 
 export interface GuideStep {

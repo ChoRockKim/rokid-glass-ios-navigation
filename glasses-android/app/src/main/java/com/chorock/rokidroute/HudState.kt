@@ -42,6 +42,8 @@ data class HudState(
     val alight: String? = null,
     /** 하차 알림이 처음 뜬(또는 바뀐) 시각 → 처음 몇 초 테두리를 깜빡인다 */
     val alightSince: Long = 0,
+    /** 탄 뒤 다음에 설 정류장(역) 이름 (지도에서 그 점 옆에 이름) */
+    val nextStop: String? = null,
 ) {
     /** 대기 중인 탑승: [버스]/[지하철], 도착 (노선, 남은 초 또는 null, 원문) */
     data class Waiting(val icon: String, val arrivals: List<Triple<String, Int?, String>>)
@@ -70,6 +72,7 @@ data class HudState(
             etaAt = if (m.has("etaSec")) now + m.optLong("etaSec") * 1000 else null,
             remaining = if (m.isNull("remaining")) null else m.optDouble("remaining"),
             riding = m.optJSONObject("ride")?.optBoolean("boarded") == true,
+            nextStop = m.optJSONObject("ride")?.optString("nextStop")?.takeIf { it.isNotEmpty() },
             stop = m.optJSONObject("stop")?.let { StopBoard.fromJson(it) },
             index = m.optInt("index"),
             total = m.optInt("total"),
@@ -88,13 +91,14 @@ data class HudState(
             val a = m.optJSONObject("ride")?.optString("alightAlert")?.takeIf { it.isNotEmpty() }
             st.copy(alight = a, alightSince = if (a == null) 0 else if (a != alight) now else alightSince)
         }
-        "arrived" -> copy(line1 = "도착", line2 = m.optString("destination"), progress = "", destination = "", warn = false, idle = false, etaAt = null, remaining = null, riding = false, stop = null, index = null, total = null, waiting = null, offlinePreview = false, cachedAt = null, alight = null)
-        "idle" -> copy(line1 = m.optString("text", "경로 없음"), line2 = "폰에서 길안내를 시작하세요", progress = "", destination = "", warn = false, idle = true, route = null, pos = null, etaAt = null, remaining = null, riding = false, stop = null, index = null, total = null, steps = emptyList(), waiting = null, offlinePreview = false, cachedAt = null, alight = null)
+        "arrived" -> copy(line1 = "도착", line2 = m.optString("destination"), progress = "", destination = "", warn = false, idle = false, etaAt = null, remaining = null, riding = false, stop = null, index = null, total = null, waiting = null, offlinePreview = false, cachedAt = null, alight = null, nextStop = null)
+        "idle" -> copy(line1 = m.optString("text", "경로 없음"), line2 = "폰에서 길안내를 시작하세요", progress = "", destination = "", warn = false, idle = true, route = null, pos = null, etaAt = null, remaining = null, riding = false, stop = null, index = null, total = null, steps = emptyList(), waiting = null, offlinePreview = false, cachedAt = null, alight = null, nextStop = null)
         "map-route" -> {
             val segs = m.getJSONArray("segments")
             copy(route = MapRoute(
                 segments = List(segs.length()) { i -> segs.getJSONObject(i).let { Segment(it.getString("kind"), points(it.getJSONArray("points"))) } },
                 turns = points(m.getJSONArray("turns")),
+                stops = m.optJSONArray("stops")?.let { a -> List(a.length()) { i -> a.getJSONObject(i).let { RouteStop(it.getInt("step"), it.getString("name"), it.getDouble("lon"), it.getDouble("lat")) } } } ?: emptyList(),
             ), steps = m.optJSONArray("steps")?.let { a -> List(a.length()) { i -> a.getJSONObject(i).let { it.optString("line1") to it.optString("line2") } } } ?: emptyList())
         }
         "map-pos" -> copy(pos = MapPos(
@@ -159,7 +163,9 @@ data class HudState(
 }
 
 data class Segment(val kind: String, val points: List<DoubleArray>) // [lon, lat]
-data class MapRoute(val segments: List<Segment>, val turns: List<DoubleArray>)
+data class MapRoute(val segments: List<Segment>, val turns: List<DoubleArray>, val stops: List<RouteStop> = emptyList())
+/** 버스·지하철 구간의 정류장·역 (step = 단계 번호) */
+data class RouteStop(val step: Int, val name: String, val lon: Double, val lat: Double)
 /**
  * estimated: 실제 위치가 아닌 경로 위 추정 지점 (시작점 등) → "나"를 그리지 않음.
  * focus: 다른 단계를 미리 보는 중이면 그 단계 시작점 [lon, lat] → 지도만 거기로, "나"는 실제 위치에.

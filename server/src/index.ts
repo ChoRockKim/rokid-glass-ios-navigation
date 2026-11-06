@@ -13,6 +13,7 @@ import { Favorites } from "./favorites.js";
 import { nearbyBoards } from "./nearby.js";
 import { Recent } from "./recent.js";
 import { clovaSpeech } from "./voice.js";
+import { kakaoStopLocator } from "./transit.js";
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -36,6 +37,8 @@ const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN ?? "";
 
 const log = (m: string) => console.log(`[${new Date().toISOString()}] ${m}`);
 const nav = new Navigator();
+// 버스·지하철 구간의 정류장 위치 (지도에 점, "다음 정류장" 표시용). 카카오 키워드 검색
+nav.stopLocator = kakaoStopLocator(KAKAO_REST_KEY, log);
 const chooser = new Chooser();
 const favorites = new Favorites(process.env.FAVORITES_FILE ?? "/data/favorites.json");
 const recents = new Recent(process.env.RECENT_FILE ?? "/data/recent.json");

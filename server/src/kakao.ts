@@ -169,6 +169,32 @@ export async function searchCategory(code: string, lon: number, lat: number, rad
   return (body.documents ?? []).map(toCandidate);
 }
 
+/**
+ * 정류장·역 위치 찾기 (카카오 대중교통 응답에는 이름만 있음). near 근처 키워드 검색 결과 중
+ * 버스: 분류가 "버스정류장"이고 이름이 같은 것, 지하철: 지하철역 분류(SW8)에서 역 이름이 같은 것. 가까운 순으로 후보 몇 개
+ * (카카오 분류 이름 "교통,수송 > 교통시설 > 버스 > 버스정류장" 은 공개 자료 기준, 실서버 로그로 확인 필요)
+ */
+export async function searchStops(name: string, kind: "bus" | "subway", near: LonLat, key: string): Promise<LonLat[]> {
+  const url = new URL("/v2/local/search/keyword.json", BASE);
+  const station = name.replace(/\(.*?\)/g, "").replace(/역$/, "").trim();
+  url.searchParams.set("query", kind === "subway" ? `${station}역` : name);
+  url.searchParams.set("x", String(near[0]));
+  url.searchParams.set("y", String(near[1]));
+  url.searchParams.set("radius", "3000");
+  url.searchParams.set("sort", "distance");
+  if (kind === "subway") url.searchParams.set("category_group_code", "SW8");
+  const body = (await getJson(url, key)) as { documents?: { place_name: string; category_name?: string; x: string; y: string }[] };
+  const flat = (t: string) => t.replace(/[\s.·()]/g, "").replace(/정류장$/, "");
+  return (body.documents ?? [])
+    .filter((d) =>
+      kind === "subway"
+        ? flat(d.place_name).startsWith(flat(station))
+        : /버스정류장|정류장/.test(d.category_name ?? "") && (flat(d.place_name).startsWith(flat(name)) || flat(name).startsWith(flat(d.place_name))),
+    )
+    .slice(0, 4)
+    .map((d) => [Number(d.x), Number(d.y)] as LonLat);
+}
+
 /** 주소(도로명·지번)로 좌표. 없으면 null */
 export async function searchAddress(query: string, key: string): Promise<Place | null> {
   const url = new URL("/v2/local/search/address.json", BASE);

@@ -207,6 +207,33 @@ class HudViewSnapshotTest {
         paparazzi.snapshot(v, "29_wifi_waiting_idle")
     }
 
+    /** 버스 타는 중: 정류장 점 (지난 것 흐리게), 다음 정류장·하차 정류장 이름 */
+    @Test
+    fun busStops() {
+        val lon0 = 127.05; val lat0 = 37.58
+        fun at(m: Double, dx: Double = 0.0) = "[${lon0 + dx / 88_000.0},${lat0 + m / 110_540.0}]"
+        val ride = (0..12).joinToString(",") { at(it * 60.0, if (it > 8) (it - 8) * 25.0 else 0.0) }
+        val names = listOf("제기역약령시장", "동대문구청.용두동주민센터", "마장축산물시장", "도선사거리", "성동구청")
+        val stopM = listOf(0.0, 170.0, 330.0, 480.0, 720.0)
+        val stops = names.indices.joinToString(",") { i ->
+            val m = stopM[i]; val dx = if (m > 480) (m / 60 - 8) * 25.0 else 0.0
+            """{"step":1,"name":"${names[i]}","lon":${lon0 + dx / 88_000.0},"lat":${lat0 + m / 110_540.0}}"""
+        }
+        var st = HudState()
+        for (j in listOf(
+            """{"type":"map-route","segments":[{"kind":"walk","points":[${at(-80.0)},${at(0.0)}]},{"kind":"bus","points":[$ride]}],"turns":[${at(-80.0)},${at(0.0)}],"stops":[$stops]}""",
+            """{"type":"map-pos","lon":$lon0,"lat":${lat0 + 250 / 110_540.0},"heading":0,"snapped":true,"next":null,"fixAge":0}""",
+            """{"type":"step","index":1,"total":2,"turn":"bus","line1":"[버스] 421 탑승 중","line2":"다음 마장축산물시장 · 성동구청 하차 · 3정거장","distance":720,"remaining":470,"etaSec":420,"offRoute":false,"destination":"성동구청","ride":{"kind":"bus","lines":["421"],"board":"제기역약령시장","alight":"성동구청","boarded":true,"stopsLeft":3,"arrivals":[],"nextStop":"마장축산물시장"}}""",
+        )) st = st.apply(JSONObject(j), T0)
+        val v = HudView(paparazzi.context) { null }
+        v.clock = { T0 }
+        v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
+        v.state = st
+        paparazzi.snapshot(v, "32_bus_stops")
+        v.viewStyle = HudView.ViewStyle.COMPACT
+        paparazzi.snapshot(v, "33_bus_stops_compact")
+    }
+
     /** 말해서 찾기: 듣는 중(음량 막대) → 들은 말 제목의 후보 (★ = 즐겨찾기) */
     @Test
     fun voiceSearch() {

@@ -736,6 +736,45 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         val routeSegs: List<Pair<String, Path>> = route?.segments?.map { it.kind to path(it.points) } ?: emptyList()
     }
 
+    /**
+     * 버스·지하철 정류장 점. 지금 단계의 정류장: 지난 것은 흐리게, 남은 것은 또렷하게.
+     * 타고 있으면 다음에 설 정류장과 내릴 정류장 옆에 이름 (다른 단계 정류장은 작은 흐린 점만)
+     */
+    private fun drawStops(canvas: Canvas, r: MapRoute, v: Viewport, screen: (Double, Double) -> Pair<Float, Float>) {
+        if (r.stops.isEmpty()) return
+        val cur = state.index
+        val mine = r.stops.filter { it.step == cur }
+        val nextAt = state.nextStop?.let { n -> mine.indexOfFirst { it.name == n } } ?: -1
+        val z = if (v.simple) 0.8f else 1f
+        for (s in r.stops) {
+            if (s.step == cur) continue
+            val (x, y) = screen(s.lon, s.lat)
+            stopDot.alpha = 70
+            canvas.drawCircle(x, y, 2.2f * z, stopDot)
+        }
+        mine.forEachIndexed { i, s ->
+            val (x, y) = screen(s.lon, s.lat)
+            val passed = state.riding && nextAt >= 0 && i < nextAt
+            stopDot.alpha = if (passed) 80 else 255
+            canvas.drawCircle(x, y, 3.2f * z, stopFill)
+            canvas.drawCircle(x, y, 3.2f * z, stopDot)
+            val label = when {
+                !state.riding -> null
+                i == nextAt -> s.name
+                i == mine.lastIndex -> "${s.name} (하차)"
+                else -> null
+            } ?: return@forEachIndexed
+            stopLabel.textSize = if (v.simple) 10f else 11.5f
+            stopLabel.alpha = if (i == nextAt) 255 else 170
+            val t = TextUtils.ellipsize(label, stopLabel, if (v.simple) 90f else 130f, TextUtils.TruncateAt.END)
+            canvas.drawText(t, 0, t.length, x + 6f * z, y + 4f, stopLabel)
+        }
+    }
+    /** 정류장 점: 검정 속(경로선을 가림) + 초록 테두리 */
+    private val stopFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.BLACK }
+    private val stopDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.6f; color = green }
+    private val stopLabel = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { color = green; typeface = Typeface.DEFAULT_BOLD; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
+
     private var geom: Geom? = null
     private val mat = android.graphics.Matrix()
     private val tmpPath = Path()
@@ -797,6 +836,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         }
         state.route?.let { r ->
             for ((kind, p) in g.routeSegs) draw(p, if (kind == "walk") routePaint else ridePaint)
+            drawStops(canvas, r, v, ::screen)
             val n = pos.next
             if (n != null && n < r.turns.size) {
                 val (x, y) = screen(r.turns[n][0], r.turns[n][1])

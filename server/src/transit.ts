@@ -1,6 +1,6 @@
 // 카카오 대중교통 후보 → 고른 경로를 안경용 단계로.
 // 카카오 대중교통 응답에는 출발지→첫 정류장, 마지막 정류장→도착지 도보가 없어서 도보 API 로 채운다.
-import { transitRoutes, walkRoute, type LonLat, type Place, type TransitLeg, type TransitRoute, type WalkRoute } from "./kakao.js";
+import { searchStops, transitRoutes, walkRoute, type LonLat, type Place, type TransitLeg, type TransitRoute, type WalkRoute } from "./kakao.js";
 import { buildGuide, formatDistance, line2For, type GuideStep } from "./guide.js";
 import { resolvePair, type ChoosePlace, type PlaceInput } from "./planner.js";
 import { distanceM } from "./guide.js";
@@ -188,4 +188,51 @@ export async function selectTransit(i: number, key: string) {
   if (!option) throw new Error(`후보 번호는 1~${plan.options.length} 입니다.`);
   const { guide, route } = await buildTransitGuide(plan, option, key);
   return { plan, option, guide, route };
+}
+
+/**
+ * Navigator.stopLocator: 구간의 정류장마다 카카오에서 위치 후보를 찾아, 경로선에 가장 가까운 것을 고른다.
+ * 탑승·하차는 경로선 양끝. 가운데 정류장은 경로선 위 비율 지점 근처에서 찾는다 (같은 이름의 반대편 정류장이 있어도 경로선에 붙은 쪽)
+ */
+export function kakaoStopLocator(key: string, log: (m: string) => void) {
+  return async (ride: { kind: "bus" | "subway"; stops: string[]; lines: string[] }, points: LonLat[]): Promise<({ lon: number; lat: number } | null)[]> => {
+    if (points.length < 2) return ride.stops.map(() => null);
+    const cum = [0];
+    for (let i = 1; i < points.length; i++) cum.push(cum[i - 1]! + distanceM(points[i - 1]!, points[i]!));
+    const total = cum[cum.length - 1]!;
+    const at = (f: number): LonLat => {
+      const t = f * total;
+      const i = Math.max(1, cum.findIndex((c) => c >= t));
+      const seg = cum[i]! - cum[i - 1]! || 1;
+      const k = (t - cum[i - 1]!) / seg;
+      return [points[i - 1]![0] + (points[i]![0] - points[i - 1]![0]) * k, points[i - 1]![1] + (points[i]![1] - points[i - 1]![1]) * k];
+    };
+    // 경로선까지 거리 (대충: 점들 사이 선분 중 가장 가까운 것)
+    const offset = (p: LonLat) => {
+      let best = Infinity;
+      for (let i = 0; i < points.length; i += Math.max(1, Math.floor(points.length / 400))) best = Math.min(best, distanceM(p, points[i]!));
+      return best;
+    };
+    const n = ride.stops.length;
+    const out: ({ lon: number; lat: number } | null)[] = [];
+    let ok = 0;
+    for (let k = 0; k < n; k++) {
+      if (k === 0 || k === n - 1) {
+        const p = k === 0 ? points[0]! : points[points.length - 1]!;
+        out.push({ lon: p[0], lat: p[1] });
+        ok++;
+        continue;
+      }
+      try {
+        const cands = await searchStops(ride.stops[k]!, ride.kind, at(k / (n - 1)), key);
+        const best = cands.map((c) => ({ c, d: offset(c) })).sort((x, y) => x.d - y.d)[0];
+        out.push(best ? { lon: best.c[0], lat: best.c[1] } : null);
+        if (best) ok++;
+      } catch {
+        out.push(null);
+      }
+    }
+    log(`stops ${ride.lines.slice(0, 2).join("/")}: ${ok}/${n} 찾음${ok < n ? ` (못 찾음: ${ride.stops.filter((_, i) => !out[i]).slice(0, 4).join(", ")})` : ""}`);
+    return out;
+  };
 }
