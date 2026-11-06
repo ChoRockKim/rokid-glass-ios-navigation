@@ -14,6 +14,7 @@ import { nearbyBoards } from "./nearby.js";
 import { Recent } from "./recent.js";
 import { clovaSpeech } from "./voice.js";
 import { kakaoStopLocator } from "./transit.js";
+import { StopCache } from "./stopcache.js";
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -38,7 +39,12 @@ const SLACK_APP_TOKEN = process.env.SLACK_APP_TOKEN ?? "";
 const log = (m: string) => console.log(`[${new Date().toISOString()}] ${m}`);
 const nav = new Navigator();
 // 버스·지하철 구간의 정류장 위치 (지도에 점, "다음 정류장" 표시용). 카카오 키워드 검색
-nav.stopLocator = kakaoStopLocator(KAKAO_REST_KEY, log, process.env.DATA_GO_KR_KEY ? seoulRouteStops(process.env.DATA_GO_KR_KEY, undefined, log) : undefined);
+nav.stopLocator = kakaoStopLocator(
+  KAKAO_REST_KEY,
+  log,
+  process.env.DATA_GO_KR_KEY ? seoulRouteStops(process.env.DATA_GO_KR_KEY, undefined, log) : undefined,
+  new StopCache(process.env.STOPS_FILE ?? "/data/stops.json"),
+);
 const chooser = new Chooser();
 const favorites = new Favorites(process.env.FAVORITES_FILE ?? "/data/favorites.json");
 const recents = new Recent(process.env.RECENT_FILE ?? "/data/recent.json");
@@ -69,7 +75,13 @@ nav.onSave((s) => {
   }
 });
 
-nav.onChange((m) => log(`nav -> ${m.type}${m.type === "step" ? ` ${m.index + 1}/${m.total}` : ""}`));
+// 단계가 바뀔 때만 (위치마다 같은 단계를 다시 보내므로 다 남기면 로그가 찬다)
+let lastNavLog = "";
+nav.onChange((m) => {
+  const t = `nav -> ${m.type}${m.type === "step" ? ` ${m.index + 1}/${m.total}` : ""}`;
+  if (t !== lastNavLog) log(t);
+  lastNavLog = t;
+});
 
 let slack: Awaited<ReturnType<typeof startSlack>> | null = null;
 
@@ -90,6 +102,16 @@ const ota = new Ota(process.env.APP_DIR ?? "/data/app", process.env.OTA_UPLOAD_T
 const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, extraTokens: GLASS_DEVICE_TOKEN ? [GLASS_DEVICE_TOKEN] : [], nav, log, api, onPositions: api?.ingest, onReroute: api?.rerouteNow, roads, ota, chooser, favorites: api ? { list: api.favoritesForGlasses, go: api.goFavorite } : undefined, voice: api?.goVoice,
   nearby: () => nearbyBoards(nav.lastKnownPosition, { kakao: KAKAO_REST_KEY, bus: process.env.DATA_GO_KR_KEY, subway: process.env.SEOUL_SUBWAY_KEY }, log) });
 // 안경 앱(?choose=1 로 연결)이 붙어 있을 때만 실시간 조회. "버스·지하철 시간" 메뉴는 연 동안만 안경이 요청한다
+// 오래 방치된 경로 자동 종료: 위치가 STALE_ROUTE_MS 동안 안 오고 안경도 안 붙어 있으면
+// (2026-11-06: 아침에 시작한 경로가 저녁까지 남아 실시간 조회·재시작 복원이 계속됨)
+const STALE_ROUTE_MS = Number(process.env.STALE_ROUTE_MS ?? 90 * 60_000);
+const staleTimer = setInterval(() => {
+  const idle = nav.idleMs();
+  if (idle !== null && idle > STALE_ROUTE_MS && !chooser.available) {
+    log(`경로 자동 종료: ${nav.current?.to.name} (위치 ${Math.round(idle / 60_000)}분 없음, 안경 연결 없음)`);
+    nav.stop();
+  }
+}, 5 * 60_000);
 const stopPoller = startRealtimePoller(nav, providersFromEnv(log), log, () => chooser.available);
 
 if (SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {
@@ -101,6 +123,7 @@ if (SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {
 const shutdown = async () => {
   log("shutting down");
   stopPoller();
+  clearInterval(staleTimer);
   glass.close();
   await slack?.stop();
   process.exit(0);

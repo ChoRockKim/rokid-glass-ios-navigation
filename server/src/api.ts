@@ -122,6 +122,9 @@ export function createApi(deps: ApiDeps) {
   const { nav, apiToken, kakaoKey, log, notify, pairing, chooser, favorites, recents, stt } = deps;
 
   const pt = (p: Place) => ({ lon: p.x, lat: p.y, name: p.name });
+  let lastLocLog = { key: "", at: 0 };
+  /** 음성 검색은 한 번에 하나 (고르는 중에 또 오면 앞 선택지가 기본값으로 끝나 엉뚱한 곳으로 안내가 시작됨) */
+  let voiceBusy = false;
   const candLabel = (c: PlaceCandidate) => (c.distance === null ? c.name : `${c.name} · ${formatDistance(c.distance)}`);
 
   /** 출발지를 정하고 그 근처에서 목적지 후보를 찾는다 */
@@ -250,13 +253,23 @@ export function createApi(deps: ApiDeps) {
    */
   async function goVoice(audio: Buffer): Promise<string> {
     if (!stt) return "서버에 음성 인식 키가 없음";
+    if (voiceBusy) return "앞의 음성 검색을 처리하는 중 · 끝난 뒤 다시";
+    voiceBusy = true;
+    try {
+      return await voiceFlow(audio);
+    } finally {
+      voiceBusy = false;
+    }
+  }
+
+  async function voiceFlow(audio: Buffer): Promise<string> {
     const saved = [
       ...(favorites?.list() ?? []).map((x) => ({ name: x.name, address: x.address, x: x.x, y: x.y })),
       ...(recents?.list() ?? []).map((x) => ({ name: x.name, address: x.address, x: x.x, y: x.y })),
     ];
     let heard: string;
     try {
-      heard = await stt(audio, saved.map((x) => x.name));
+      heard = await stt!(audio, saved.map((x) => x.name));
     } catch (e) {
       log(`voice: ${e instanceof Error ? e.message : String(e)}`);
       return e instanceof SttError ? e.message : "음성 인식 실패";
@@ -445,7 +458,12 @@ export function createApi(deps: ApiDeps) {
         if (positions === null) throw new HttpError(400, "unknown location format");
         const r = ingest(positions);
         if (positions.length) {
-          log(`location x${positions.length} ${r.accepted ? `s=${r.progress?.toFixed(0)} off=${r.offset?.toFixed(0)}m step=${(r.index ?? 0) + 1}${r.offRoute ? " OFF" : ""}` : r.reason}`);
+          // 2초마다 오는 위치를 다 남기면 로그가 이것으로 찬다: 단계·이탈·거절 이유가 바뀔 때와 1분마다만
+          const key = r.accepted ? `${r.index}|${r.offRoute ? 1 : 0}` : String(r.reason);
+          if (key !== lastLocLog.key || Date.now() - lastLocLog.at > 60_000) {
+            lastLocLog = { key, at: Date.now() };
+            log(`location x${positions.length} ${r.accepted ? `s=${r.progress?.toFixed(0)} off=${r.offset?.toFixed(0)}m step=${(r.index ?? 0) + 1}${r.offRoute ? " OFF" : ""}` : r.reason}`);
+          }
         }
         // OwnTracks 는 응답으로 JSON 배열(보낼 명령 목록)을 기대한다. Overland 는 {"result":"ok"} 가 필요
         if (typeof (body as Record<string, unknown>)._type === "string") send(res, 200, []);
@@ -639,14 +657,16 @@ export function createApi(deps: ApiDeps) {
           found = { name: address, address, x: lon, y: lat };
         }
         const fav = favorites!.upsert({ name, category, address, place: found.name, x: found.x, y: found.y });
-        log(`favorite added: ${fav.name} [${fav.category}] ${fav.place}`);
-        send(res, 200, { ok: true, favorite: fav, speech: `${fav.category}에 ${fav.name} 등록. ${fav.place}.` });
+        log(`favorite added: ${fav.name} [${fav.category}] ${fav.place}${favorites!.saveError ? ` (디스크 저장 실패: ${favorites!.saveError})` : ""}`);
+        const warn = favorites!.saveError ? " 서버 디스크 저장에 실패해 재시작하면 사라질 수 있습니다." : "";
+        send(res, 200, { ok: true, favorite: fav, ...(warn ? { saveError: favorites!.saveError } : {}), speech: `${fav.category}에 ${fav.name} 등록. ${fav.place}.${warn}` });
         return true;
       }
 
       if (route === "POST /favorites/delete") {
         const name = String((body as Record<string, unknown>).name ?? "").trim();
         const gone = name ? favorites!.remove(name) : null;
+        if (gone && favorites!.saveError) log(`favorite delete: 디스크 저장 실패 (${favorites!.saveError})`);
         send(res, gone ? 200 : 404, gone ? { ok: true, speech: `${gone.name} 삭제.` } : { error: "없는 즐겨찾기", speech: `${name} 즐겨찾기가 없습니다.` });
         return true;
       }

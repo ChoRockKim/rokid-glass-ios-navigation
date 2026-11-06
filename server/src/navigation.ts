@@ -420,6 +420,14 @@ export class Navigator {
   private lastMapPos: MapMessage | null = null;
   /** 마지막으로 실제 위치를 반영한 시각 (서버 시계) */
   private lastFixAt: number | null = null;
+  /** 경로를 시작(또는 복원)한 시각. 위치가 한 번도 안 왔으면 이것부터 잰다 */
+  private activeSince = 0;
+
+  /** 경로가 있으면 마지막 위치(없으면 시작)부터 지난 ms, 없으면 null */
+  idleMs(): number | null {
+    if (!this.active) return null;
+    return this.now() - Math.max(this.lastFixAt ?? 0, this.activeSince);
+  }
   private lastEmitted = "";
   /** 경로가 없을 때도 마지막 위치는 기억한다 (단축어 /route 에 출발지가 없을 때 사용) */
   lastKnownPosition: Position | null = null;
@@ -555,6 +563,7 @@ export class Navigator {
     };
     this.lastMapPos = null;
     this.lastFixAt = null;
+    this.activeSince = this.now();
     this.emitMap(this.routeMap(this.active));
     const p0 = this.active.tracker.pointAt(0);
     if (p0) this.emitMap({ type: "map-pos", ...p0, snapped: true, estimated: true, next: guide.length > 1 ? 1 : null });

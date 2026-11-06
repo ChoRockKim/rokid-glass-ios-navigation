@@ -69,10 +69,19 @@ export class Favorites {
     return f;
   }
 
+  /** 마지막 저장이 실패했으면 그 이유 (메모리에는 반영돼 있고, 다음 저장 때 다시 씀) */
+  saveError: string | null = null;
+
+  /** 디스크 쓰기가 실패해도 예외를 던지지 않는다 (등록·삭제는 메모리에 반영, 응답에서 알림) */
   private save() {
     if (!this.file) return;
-    mkdirSync(dirname(this.file), { recursive: true });
-    writeFileSync(this.file + ".tmp", JSON.stringify({ items: this.items }, null, 1));
-    renameSync(this.file + ".tmp", this.file);
+    try {
+      mkdirSync(dirname(this.file), { recursive: true });
+      writeFileSync(this.file + ".tmp", JSON.stringify({ items: this.items }, null, 1));
+      renameSync(this.file + ".tmp", this.file);
+      this.saveError = null;
+    } catch (e) {
+      this.saveError = e instanceof Error ? e.message : String(e);
+    }
   }
 }
