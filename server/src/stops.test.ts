@@ -77,18 +77,25 @@ test("탄 뒤: 다음 정류장 이름, 지난 정류장 수로 남은 정거장
   const last = maps[maps.length - 1]!;
   assert.deepEqual(last.stops!.map((s) => s.name), ["제기역약령시장", "동대문구청.용두동주민센터", "도선사거리", "성동구청"]);
   const at = (i: number) => { nav.updatePositions([{ lon: pts[i]![0], lat: pts[i]![1], acc: 5, ts: ++now }]); return nav.snapshot(); };
-  // 1/4 지점을 막 지나 1/2 사이: 다음 = 도선사거리(마장축산물시장은 못 찾아 건너뜀), 남은 2정거장
+  // 1/4 지점을 막 지나: 바로 다음은 위치를 못 찾은 마장축산물시장 → 이름은 안 쓰고, 남은 정거장은 그것까지 세어 약 3
   let m = at(Math.floor((idxAt(0.25) + idxAt(0.5)) / 2) + 1);
   assert.ok(m.type === "step" && m.ride?.boarded);
+  assert.equal(m.ride!.nextStop, undefined);
+  assert.equal(m.ride!.stopsLeft, 3);
+  assert.equal(m.line2, "성동구청 하차 · 약 3정거장");
+  assert.ok(!m.ride!.alightAlert);
+  // 1/2 을 지나면 (마장축산물시장을 지났을 것): 다음 = 도선사거리, 남은 2
+  m = at(idxAt(0.62));
+  assert.ok(m.type === "step");
   assert.equal(m.ride!.nextStop, "도선사거리");
   assert.equal(m.ride!.stopsLeft, 2);
-  assert.equal(m.line2, "다음 도선사거리 · 성동구청 하차 · 2정거장");
+  assert.equal(m.line2, "다음 도선사거리 · 성동구청 하차 · 약 2정거장");
   assert.ok(!m.ride!.alightAlert);
   // 도선사거리를 지나면: 다음이 하차 → "다음 정류장에서 하차"
   m = at(Math.min(pts.length - 1, idxAt(0.75) + 3));
   if (m.type === "step" && m.remaining! > 150) {
     assert.equal(m.ride!.alightAlert, "soon");
-    assert.equal(m.line2, "성동구청 하차 · 1정거장");
+    assert.equal(m.line2, "성동구청 하차 · 약 1정거장");
   }
 });
 
@@ -116,4 +123,25 @@ test("서울 노선정보: 탑승 정류장부터 노선 순서대로 이름을 
   // 키에 이 API 가 없으면(빈 목록) null → 카카오로
   assert.equal(await find({ stops: ["A", "B"], lines: ["999"] }, [[127, 37.5]]), null);
   srv.close();
+});
+
+test("탑승·하차 정류장만 찾았을 때: 타자마자 '다음 정류장 하차'가 뜨지 않는다 (2026-11-06 버그)", async () => {
+  const { Navigator } = await import("./navigation.js");
+  const { parseTransit } = await import("./kakao.js");
+  const { rideStep } = await import("./transit.js");
+  let now = 0;
+  const nav = new Navigator(() => now);
+  const leg = parseTransit(raw).routes[0]!.legs[2]!; // 5곳 = 4정거장
+  const pts = leg.points;
+  nav.stopLocator = async (r) => r.stops.map((_, k) => (k === 0 ? { lon: pts[0]![0], lat: pts[0]![1] } : k === r.stops.length - 1 ? { lon: pts[pts.length - 1]![0], lat: pts[pts.length - 1]![1] } : null));
+  const place = { name: "x", address: "", x: 0, y: 0 };
+  nav.start({ from: place, to: place, route: { totalDistance: 1, totalTime: 1, steps: [] }, guide: [rideStep(leg)], mode: "transit", startedBy: "t" });
+  await new Promise((r) => setTimeout(r, 10));
+  const at = (i: number) => { nav.updatePositions([{ lon: pts[i]![0], lat: pts[i]![1], acc: 5, ts: ++now }]); return nav.snapshot(); };
+  at(5);
+  const m = at(12);
+  assert.ok(m.type === "step" && m.ride?.boarded);
+  assert.ok(m.ride!.stopsLeft >= 3, `남은 ${m.ride!.stopsLeft}`);
+  assert.ok(!m.ride!.alightAlert, String(m.ride!.alightAlert));
+  assert.equal(m.ride!.nextStop, undefined);
 });

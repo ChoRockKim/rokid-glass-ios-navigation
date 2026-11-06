@@ -247,6 +247,30 @@ export function arrivalsText(xs: Arrival[]): string {
   return `${arrivalText(a)} · ${arrivalText(b)}`;
 }
 
+/**
+ * 남은 정거장 수와 다음 정류장. 위치를 못 찾은 정류장도 센다:
+ * 바로 앞뒤로 찾은 정류장 사이(p → k)의 못 찾은 정류장은 거리 비율로 지난 수를 어림한다.
+ * 다음 정류장 이름은 바로 다음이 찾은 정류장일 때만 (2026-11-06: 탑승·하차만 찾았을 때 타자마자 "다음 정류장 하차"가 뜬 버그)
+ */
+export function stopsAhead(r: RideInfo, marks: StopMark[], progress: number): { left: number; next?: string } {
+  const n = r.stops.length;
+  const idx = (m: StopMark, from: number) => {
+    const k = r.stops.indexOf(m.name, from);
+    return k < 0 ? r.stops.indexOf(m.name) : k;
+  };
+  const withK: { m: StopMark; k: number }[] = [];
+  for (const m of marks) withK.push({ m, k: idx(m, withK.length ? withK[withK.length - 1]!.k + 1 : 0) });
+  const nextI = withK.findIndex((x) => x.m.s > progress + PASSED_M);
+  if (nextI < 0) return { left: 1 };
+  const nk = withK[nextI]!;
+  const prev = withK[nextI - 1];
+  const gap = prev ? nk.k - prev.k : nk.k;
+  const span = prev ? nk.m.s - prev.m.s : nk.m.s;
+  const toNext = gap <= 1 || span <= 0 ? 1 : Math.max(1, Math.ceil((gap * (nk.m.s - progress)) / span));
+  const left = Math.max(1, toNext + (n - 1 - nk.k));
+  return { left, ...(toNext === 1 ? { next: nk.m.name } : {}) };
+}
+
 function rideView(a: ActiveRoute, step: GuideStep, now: number) {
   const r = step.ride!;
   const start = a.tracker.stepStart[a.index] ?? 0;
@@ -256,10 +280,11 @@ function rideView(a: ActiveRoute, step: GuideStep, now: number) {
   const remaining = remainingOf(a) ?? step.distance;
   const stopsTotal = Math.max(1, r.stops.length - 1);
   // 정류장 위치를 찾았으면 지난 정류장을 세고, 못 찾았으면 거리 비율로 추정한다
-  const marks = r.marks && r.marks.length >= 2 && a.realIndex === a.index ? r.marks : null;
-  const ahead = marks && a.progress !== null ? marks.filter((m) => m.s > a.progress! + PASSED_M) : null;
-  const nextStop = boarded && ahead?.length ? ahead[0]!.name : undefined;
-  const stopsLeft = boarded ? (ahead ? Math.max(1, ahead.length) : Math.max(1, Math.ceil((stopsTotal * remaining) / len))) : stopsTotal;
+  const marks = r.marks && r.marks.length >= 2 && a.realIndex === a.index && a.progress !== null ? r.marks : null;
+  const ahead = boarded && marks ? stopsAhead(r, marks, a.progress!) : null;
+  const allFound = !!marks && marks.length >= r.stops.length;
+  const nextStop = ahead?.next;
+  const stopsLeft = boarded ? (ahead ? ahead.left : Math.max(1, Math.ceil((stopsTotal * remaining) / len))) : stopsTotal;
   const icon = r.kind === "bus" ? "[버스]" : "[지하철]";
   const name = r.lines.slice(0, 3).join("/");
   const fresh = r.live && r.liveAt !== null && now - r.liveAt < LIVE_MAX_AGE_MS;
@@ -280,8 +305,8 @@ function rideView(a: ActiveRoute, step: GuideStep, now: number) {
   const line2 = !boarded
     ? `${r.board} → ${r.alight} · ${stopsTotal}정거장`
     : nextStop && stopsLeft > 1
-      ? `다음 ${nextStop} · ${r.alight} 하차 · ${stopsLeft}정거장`
-      : `${r.alight} 하차 · ${ahead ? "" : "약 "}${stopsLeft}정거장`;
+      ? `다음 ${nextStop} · ${r.alight} 하차 · ${allFound ? "" : "약 "}${stopsLeft}정거장`
+      : `${r.alight} 하차 · ${allFound ? "" : "약 "}${stopsLeft}정거장`;
   return {
     line1,
     line2,
