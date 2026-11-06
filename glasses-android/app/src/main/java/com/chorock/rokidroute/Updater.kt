@@ -44,7 +44,8 @@ class Updater(
         private set
     private var busy = false
 
-    fun check() {
+    /** onDone: 확인이 끝난 뒤(성공·실패 모두) 메인 스레드에서 한 번 */
+    fun check(onDone: (() -> Unit)? = null) {
         if (busy) return
         val t = token() ?: return onStatus("연결 토큰 없음")
         busy = true
@@ -69,7 +70,7 @@ class Updater(
                     }
                 }
             }.getOrElse { "확인 실패 (${it.javaClass.simpleName})" }
-            main.post { busy = false; onStatus(msg) }
+            main.post { busy = false; onStatus(msg); onDone?.invoke() }
         }.start()
     }
 

@@ -92,10 +92,10 @@ class MainActivity : Activity() {
                 hud.state = hud.state.copy(status = it)
                 // 상태 문구가 비면 서버와 연결된 것 (ServerClient.onOpen 에서 "" 를 보낸다)
                 hud.device = hud.device.copy(server = it.isEmpty() && hud.pairCode == null)
-                // 처음 연결되면 새 버전이 있는지 한 번 조용히 확인 (설치는 메뉴에서 직접)
+                // 앱을 켜고 처음 연결되면 새 버전을 한 번 확인하고, 있으면 바로 자동 설치 (안내 중이어도: 경로는 서버에 저장돼 재시작 후 이어짐)
                 if (it.isEmpty() && hud.pairCode == null && !checkedUpdate) {
                     checkedUpdate = true
-                    hud.postDelayed({ updater.check() }, 3_000)
+                    hud.postDelayed({ updater.check { maybeAutoInstall(atLaunch = true) } }, 1_000)
                 }
             },
             onPairCode = { hud.pairCode = it },
@@ -339,7 +339,7 @@ class MainActivity : Activity() {
         val hint = "쓸기 이동 · 탭 선택 · 뒤로 이전"
         hud.menu = when (s) {
             Sub.Loading -> HudView.Menu(listOf("불러오는 중…"), title = "목적지", hint = hint)
-            is Sub.Group -> HudView.Menu(s.items.map(::label), selected, title = if (s.kind == Item.GUIDE) "안내" else "설정", hint = hint)
+            is Sub.Group -> HudView.Menu(s.items.map(::label), selected, title = "설정", hint = hint)
             is Sub.Nearby -> HudView.Menu(
                 emptyList(), title = "버스·지하철 시간" + (s.at?.let { " · ${HudView.clockText(it)} 기준" } ?: ""),
                 note = s.note, hint = "탭 새로고침 · 20초마다 갱신 · 뒤로 이전", boards = s.boards ?: emptyList(), boardsAt = s.at,
@@ -407,13 +407,18 @@ class MainActivity : Activity() {
 
     /**
      * 자동 업데이트 (rokid-conversate 와 같은 방식): 새 버전이 있으면 확인 없이 설치하고 앱이 다시 켜진다.
-     * 길안내 중에는 미루고 안내가 끝나면(경로 없음·도착) 설치. '이 출처 허용'이 꺼져 있으면 설정 화면을 갑자기 띄우지 않고
+     * 앱을 켜고 처음 확인할 때는 바로 설치. 그 뒤(6시간마다 확인)에는 길안내 중이면 미루고 안내가 끝나면(경로 없음·도착) 설치. '이 출처 허용'이 꺼져 있으면 설정 화면을 갑자기 띄우지 않고
      * 메뉴 > 설정 > 업데이트에서 직접 (그때 허용 화면으로 안내)
      */
-    private fun maybeAutoInstall() {
+    private fun maybeAutoInstall(atLaunch: Boolean = false) {
         val l = updater.available ?: return
-        if (navigating || hud.menu != null || autoInstallTried == l.versionCode) return
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) return
+        if (autoInstallTried == l.versionCode) return
+        // 앱을 막 켰을 때는 안내 중·메뉴 열림이어도 바로 설치. 그 밖에는 안내가 끝나고 메뉴가 닫혀 있을 때만
+        if (!atLaunch && (navigating || hud.menu != null)) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            if (atLaunch) showNotice("새 버전 ${l.versionName} · 자동 설치하려면 설정 > 업데이트에서 '이 출처 허용'")
+            return
+        }
         autoInstallTried = l.versionCode
         showNotice("새 버전 ${l.versionName} 자동 설치 중…")
         updater.install()
@@ -437,16 +442,19 @@ class MainActivity : Activity() {
     enum class Input { NEXT, PREV, SELECT, BACK }
 
     /**
-     * 메뉴 항목. 메인 메뉴는 안내 중일 때만 "안내 ▸" 가 보이고, 드물게 쓰는 것은 "설정 ▸" 아래로
-     *   메인: 길안내 화면으로 / 목적지 ▸ / 버스·지하철 시간 / 안내 ▸ / 설정 ▸ / 앱 종료
-     *   안내 ▸: 경로 다시 찾기 / 안내 종료      설정 ▸: 지도 표시 / 방향 다시 맞추기 / 업데이트
+     * 메뉴 항목. 안내 중일 때만 "경로 다시 찾기"(맨 위 바로 아래)·"안내 종료"가 보이고, 드물게 쓰는 것은 "설정 ▸" 아래로
+     *   메인: 길안내 화면으로 / 경로 다시 찾기 / 목적지 ▸ / 버스·지하철 시간 / 안내 종료 / 설정 ▸ / 앱 종료
+     *   설정 ▸: 지도 표시 / 방향 다시 맞추기 / 업데이트
      *   목적지 ▸: 최근 (n) / 즐겨찾기 카테고리들 → 장소 → 바로 안내
      */
-    enum class Item { BACK_TO_NAV, DEST, NEARBY, GUIDE, SETTINGS, STOP, REROUTE, RECALIBRATE, MAP_MODE, UPDATE, EXIT }
+    enum class Item { BACK_TO_NAV, DEST, NEARBY, SETTINGS, STOP, REROUTE, RECALIBRATE, MAP_MODE, UPDATE, EXIT }
 
     private val navigating get() = !hud.state.idle && hud.state.progress.isNotEmpty()
 
-    private fun mainItems() = listOfNotNull(Item.BACK_TO_NAV, Item.DEST, Item.NEARBY, Item.GUIDE.takeIf { navigating }, Item.SETTINGS, Item.EXIT)
+    private fun mainItems() = listOfNotNull(
+        Item.BACK_TO_NAV, Item.REROUTE.takeIf { navigating }, Item.DEST, Item.NEARBY,
+        Item.STOP.takeIf { navigating }, Item.SETTINGS, Item.EXIT,
+    )
 
     /** 메인 메뉴가 열릴 때의 항목 (안내 중인지에 따라 다름) */
     private var mainList: List<Item> = emptyList()
@@ -462,11 +470,10 @@ class MainActivity : Activity() {
     private fun label(item: Item): String = when (item) {
         Item.BACK_TO_NAV -> if (navigating) "길안내 화면으로" else "화면 닫기"
         Item.DEST -> "목적지 ▸"
-        Item.GUIDE -> "안내 ▸"
         Item.SETTINGS -> "설정 ▸" + if (updater.available != null) "  ●" else ""
         Item.NEARBY -> "버스·지하철 시간"
         Item.STOP -> "안내 종료"
-        Item.REROUTE -> "여기서 경로 다시 찾기"
+        Item.REROUTE -> "경로 다시 찾기"
         Item.RECALIBRATE -> "방향 다시 맞추기"
         Item.MAP_MODE -> "지도: ${hud.mapMode.label}"
         Item.UPDATE -> updater.available?.let { "업데이트 설치 (${it.versionName})" } ?: "업데이트 확인"
@@ -532,7 +539,6 @@ class MainActivity : Activity() {
     private fun select(item: Item, m: HudView.Menu) {
         when (item) {
             Item.BACK_TO_NAV -> { sub = null; hud.menu = null }
-            Item.GUIDE -> showSub(Sub.Group(Item.GUIDE, listOf(Item.REROUTE, Item.STOP)), 0)
             Item.SETTINGS -> showSub(Sub.Group(Item.SETTINGS, listOf(Item.MAP_MODE, Item.RECALIBRATE, Item.UPDATE)), 0)
             Item.DEST -> {
                 // 저장해 둔 목록이 있으면 바로 보여 주고, 새 목록을 받으면 바꾼다

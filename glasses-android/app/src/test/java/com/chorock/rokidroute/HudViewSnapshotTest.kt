@@ -45,7 +45,7 @@ class HudViewSnapshotTest {
         v.clock = { T0 }
         v.device = HudView.Device(battery = 64, network = "Wi-Fi", server = true)
         v.update = "0.3.3"
-        v.menu = HudView.Menu(listOf("길안내 화면으로", "목적지 ▸", "버스·지하철 시간", "안내 ▸", "설정 ▸  ●", "앱 종료"), selected = 1)
+        v.menu = HudView.Menu(listOf("길안내 화면으로", "경로 다시 찾기", "목적지 ▸", "버스·지하철 시간", "안내 종료", "설정 ▸  ●", "앱 종료"), selected = 1)
         paparazzi.snapshot(v, "09_menu")
     }
 
