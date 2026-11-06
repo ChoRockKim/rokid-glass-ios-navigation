@@ -220,7 +220,7 @@ export const ALIGHT_SOON_M = 600;
 export const ALIGHT_NOW_M = 150;
 
 /** 찾은 정류장이 버스 경로선에서 이보다 멀면 다른 곳으로 본다 */
-const STOP_MAX_OFFSET_M = 120;
+const STOP_MAX_OFFSET_M = 150;
 /** 정류장 지점을 이만큼 지나면 지난 것으로 본다 */
 const PASSED_M = 20;
 

@@ -278,3 +278,56 @@ export function providersFromEnv(debug?: DebugLog): ArrivalProvider[] {
   if (process.env.DATA_GO_KR_KEY) out.push(seoulBusProvider(process.env.DATA_GO_KR_KEY, undefined, debug));
   return out;
 }
+
+/**
+ * 서울 버스 노선의 정류장 좌표 (공공데이터포털 서울특별시_노선정보조회: getBusRouteList → getStaionByRoute).
+ * 탑승 정류장(경로선 시작에 가장 가까운 같은 이름)부터 노선 순서대로 하차까지 이름을 맞춰 좌표를 준다.
+ * 노선마다 2번 부르고 기억한다. 키에 이 API 활용 신청이 안 돼 있으면 빈 목록 → null (카카오로 대신).
+ * ⚠ 공개 자료 기준으로 쓴 것. 실제 응답은 실서버 로그(stops … (노선정보))로 확인
+ */
+export function seoulRouteStops(key: string, base = "http://ws.bus.go.kr/api/rest", debug?: DebugLog) {
+  const cache = new Map<string, Record<string, string>[]>();
+  async function items(path: string, params: Record<string, string>) {
+    const q = new URLSearchParams({ ...params, resultType: "json" });
+    const text = await busGet(`${base}/${path}?serviceKey=${key}&${q}`);
+    const list = text.trim().startsWith("{") ? ((JSON.parse(text).msgBody?.itemList ?? []) as Record<string, string>[]) : xmlItems(text, "itemList");
+    if (!list.length) debug?.(`bus route debug ${path}: empty, head=${text.replace(/serviceKey=[^&"<]+/g, "serviceKey=***").slice(0, 200)}`);
+    return list;
+  }
+  const flat = (t: string) => String(t ?? "").replace(/[\s.·()]/g, "");
+  return async (ride: { stops: string[]; lines: string[] }, points: [number, number][]): Promise<({ lon: number; lat: number } | null)[] | null> => {
+    const line = ride.lines.map((l) => l.replace(/번$/, "")).find(Boolean);
+    if (!line || ride.stops.length < 2 || !points.length) return null;
+    let stations = cache.get(line);
+    if (!stations) {
+      const routes = await items("busRouteInfo/getBusRouteList", { strSrch: line });
+      const r = routes.find((x) => String(x.busRouteNm) === line);
+      if (!r?.busRouteId) return null;
+      stations = (await items("busRouteInfo/getStaionByRoute", { busRouteId: String(r.busRouteId) })).filter((s) => s.gpsX && s.gpsY);
+      if (!stations.length) return null;
+      cache.set(line, stations);
+    }
+    const pos = (s: Record<string, string>): [number, number] => [Number(s.gpsX), Number(s.gpsY)];
+    const board = stations
+      .map((s, i) => ({ s, i }))
+      .filter((x) => flat(x.s.stationNm!) === flat(ride.stops[0]!))
+      .sort((a, b) => distanceM(pos(a.s), points[0]!) - distanceM(pos(b.s), points[0]!))[0];
+    if (!board) return null;
+    const out: ({ lon: number; lat: number } | null)[] = ride.stops.map(() => null);
+    let j = board.i;
+    out[0] = { lon: pos(board.s)[0], lat: pos(board.s)[1] };
+    for (let k = 1; k < ride.stops.length; k++) {
+      // 다음 몇 정류장 안에서 같은 이름 (회차 지점에서 순서가 이어지도록 노선 끝을 넘으면 처음으로)
+      for (let step = 1; step <= 6; step++) {
+        const idx = (j + step) % stations.length;
+        if (flat(stations[idx]!.stationNm!) === flat(ride.stops[k]!)) {
+          const p = pos(stations[idx]!);
+          out[k] = { lon: p[0], lat: p[1] };
+          j = idx;
+          break;
+        }
+      }
+    }
+    return out;
+  };
+}

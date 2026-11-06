@@ -186,14 +186,14 @@ export async function searchStops(name: string, kind: "bus" | "subway", near: Lo
   const body = (await getJson(url, key)) as { documents?: { place_name: string; category_name?: string; x: string; y: string }[] };
   const flat = (t: string) => t.replace(/[\s.·()]/g, "").replace(/정류장$/, "");
   debug?.(`stop search "${url.searchParams.get("query")}": ${(body.documents ?? []).slice(0, 3).map((d) => `${d.place_name}|${d.category_name ?? ""}`).join(" ; ") || "결과 없음"}`);
-  return (body.documents ?? [])
-    .filter((d) =>
-      kind === "subway"
-        ? flat(d.place_name).startsWith(flat(station))
-        : /버스정류장|정류장/.test(d.category_name ?? "") && (flat(d.place_name).startsWith(flat(name)) || flat(name).startsWith(flat(d.place_name))),
-    )
-    .slice(0, 4)
-    .map((d) => [Number(d.x), Number(d.y)] as LonLat);
+  const docs = body.documents ?? [];
+  if (kind === "subway") return docs.filter((d) => flat(d.place_name).startsWith(flat(station))).slice(0, 4).map((d) => [Number(d.x), Number(d.y)] as LonLat);
+  // 버스: 카카오 키워드 검색은 정류장 자체보다 정류장 이름이 된 곳(주민센터, 학교…)을 준다 (2026-11-06 실서버 로그).
+  // 정류장 분류가 있으면 그것, 없으면 이름이 같은 곳 → 부르는 쪽이 버스 경로선 위로 옮긴다 (대략 위치)
+  const want = flat(name);
+  const same = (d: { place_name: string }) => { const p = flat(d.place_name); return p.length >= 2 && (p.includes(want) || want.includes(p)); };
+  const stops = docs.filter((d) => /버스정류장/.test(d.category_name ?? "") && same(d));
+  return (stops.length ? stops : docs.filter(same)).slice(0, 4).map((d) => [Number(d.x), Number(d.y)] as LonLat);
 }
 
 /** 주소(도로명·지번)로 좌표. 없으면 null */

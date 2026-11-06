@@ -15,6 +15,12 @@ before(async () => {
     queries.push(q);
     res.setHeader("content-type", "application/json");
     const mid = pts[Math.floor(pts.length / 2)]!;
+    // 2026-11-06 실서버: 정류장 이름으로 찾으면 그 이름이 된 곳(주민센터)이 나옴
+    if (q === "황학동주민센터")
+      return res.end(JSON.stringify({ documents: [
+        { place_name: "황학동주민센터", category_name: "사회,공공기관 > 지방행정기관 > 행정복지센터", x: "127.02", y: "37.57" },
+        { place_name: "세븐일레븐 황학주민센터점", category_name: "가정,생활 > 편의점", x: "127.03", y: "37.57" },
+      ] }));
     // 같은 이름 반대편 정류장(경로선에서 먼 것)과 경로선 위 정류장, 그리고 정류장이 아닌 같은 이름 가게
     res.end(JSON.stringify({ documents: [
       { place_name: q, category_name: "교통,수송 > 교통시설 > 버스 > 버스정류장", x: String(mid[0] + 0.01), y: String(mid[1]) },
@@ -42,6 +48,11 @@ test("카카오 정류장 찾기: 버스정류장 분류만, 경로선에 가까
   assert.ok(Math.abs(found[1]!.lon - (mid[0] + 0.00005)) < 1e-9, "경로선에 붙은 쪽");
   assert.equal(queries.length, leg.stops.length - 2); // 가운데 정류장만 검색
   assert.ok(logs.some((l) => /5\/5 찾음/.test(l)), logs.join("\n"));
+});
+
+test("버스정류장 분류가 없으면 이름이 같은 곳(정류장 이름이 된 곳)을 대략 위치로", async () => {
+  const { searchStops } = await import("./kakao.js");
+  assert.deepEqual(await searchStops("황학동주민센터", "bus", [127.02, 37.57], "k"), [[127.02, 37.57]]);
 });
 
 test("탄 뒤: 다음 정류장 이름, 지난 정류장 수로 남은 정거장, 하차 알림은 정거장 수로", async () => {
@@ -79,4 +90,30 @@ test("탄 뒤: 다음 정류장 이름, 지난 정류장 수로 남은 정거장
     assert.equal(m.ride!.alightAlert, "soon");
     assert.equal(m.line2, "성동구청 하차 · 1정거장");
   }
+});
+
+test("서울 노선정보: 탑승 정류장부터 노선 순서대로 이름을 맞춰 좌표, 노선마다 한 번만 부름", async () => {
+  const { seoulRouteStops, resetBusQuota } = await import("./realtime.js");
+  resetBusQuota();
+  let hits = 0;
+  // 241 노선: A B C D E F (회차) ... 반대 방향에도 B 가 있음
+  const st = [["A", 127.0, 37.50], ["B", 127.0, 37.51], ["C", 127.0, 37.52], ["D", 127.0, 37.53], ["E", 127.0, 37.54], ["B", 127.001, 37.51]];
+  const srv = createServer((req, res) => {
+    hits++;
+    const u = new URL(req.url!, "http://x");
+    res.setHeader("content-type", "application/json");
+    if (u.pathname.endsWith("getBusRouteList")) return res.end(JSON.stringify({ msgBody: { itemList: [{ busRouteNm: "2412", busRouteId: "9" }, { busRouteNm: "241", busRouteId: "1" }] } }));
+    assert.equal(u.searchParams.get("busRouteId"), "1");
+    res.end(JSON.stringify({ msgBody: { itemList: st.map(([n, x, y]) => ({ stationNm: n, gpsX: String(x), gpsY: String(y) })) } }));
+  });
+  await new Promise<void>((r) => srv.listen(0, r));
+  const find = seoulRouteStops("k", `http://127.0.0.1:${(srv.address() as { port: number }).port}`);
+  const ride = { stops: ["B", "C", "X", "E"], lines: ["241"] };
+  const out = await find(ride, [[127.0, 37.5101], [127.0, 37.54]]);
+  assert.deepEqual(out, [{ lon: 127.0, lat: 37.51 }, { lon: 127.0, lat: 37.52 }, null, { lon: 127.0, lat: 37.54 }]);
+  await find(ride, [[127.0, 37.5101], [127.0, 37.54]]);
+  assert.equal(hits, 2);
+  // 키에 이 API 가 없으면(빈 목록) null → 카카오로
+  assert.equal(await find({ stops: ["A", "B"], lines: ["999"] }, [[127, 37.5]]), null);
+  srv.close();
 });

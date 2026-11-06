@@ -194,7 +194,11 @@ export async function selectTransit(i: number, key: string) {
  * Navigator.stopLocator: 구간의 정류장마다 카카오에서 위치 후보를 찾아, 경로선에 가장 가까운 것을 고른다.
  * 탑승·하차는 경로선 양끝. 가운데 정류장은 경로선 위 비율 지점 근처에서 찾는다 (같은 이름의 반대편 정류장이 있어도 경로선에 붙은 쪽)
  */
-export function kakaoStopLocator(key: string, log: (m: string) => void) {
+export function kakaoStopLocator(
+  key: string,
+  log: (m: string) => void,
+  routeStops?: (ride: { stops: string[]; lines: string[] }, points: LonLat[]) => Promise<({ lon: number; lat: number } | null)[] | null>,
+) {
   return async (ride: { kind: "bus" | "subway"; stops: string[]; lines: string[] }, points: LonLat[]): Promise<({ lon: number; lat: number } | null)[]> => {
     if (points.length < 2) return ride.stops.map(() => null);
     const cum = [0];
@@ -216,6 +220,8 @@ export function kakaoStopLocator(key: string, log: (m: string) => void) {
     const n = ride.stops.length;
     const out: ({ lon: number; lat: number } | null)[] = [];
     let ok = 0;
+    // 서울 버스는 노선 정류장 목록(정확한 좌표)부터. 안 되면(키에 노선정보조회가 없거나 한도) 카카오로
+    const exact = ride.kind === "bus" && routeStops ? await routeStops(ride, points).catch((e) => (log(`stops 노선정보조회 실패: ${e instanceof Error ? e.message : String(e)}`), null)) : null;
     for (let k = 0; k < n; k++) {
       if (k === 0 || k === n - 1) {
         const p = k === 0 ? points[0]! : points[points.length - 1]!;
@@ -223,16 +229,25 @@ export function kakaoStopLocator(key: string, log: (m: string) => void) {
         ok++;
         continue;
       }
+      const known = exact?.[k];
+      if (known) { out.push(known); ok++; continue; }
       try {
-        const cands = await searchStops(ride.stops[k]!, ride.kind, at(k / (n - 1)), key, k <= 3 ? log : undefined);
-        const best = cands.map((c) => ({ c, d: offset(c) })).sort((x, y) => x.d - y.d)[0];
+        const name = ride.stops[k]!;
+        // "청계벽산아파트.텐즈힐아파트" 처럼 두 이름이면 앞 이름도
+        const queries = [name, ...(name.includes(".") ? [name.split(".")[0]!] : [])];
+        let best: { c: LonLat; d: number } | undefined;
+        for (const q of queries) {
+          const cands = await searchStops(q, ride.kind, at(k / (n - 1)), key);
+          best = cands.map((c) => ({ c, d: offset(c) })).filter((x) => x.d <= 150).sort((x, y) => x.d - y.d)[0];
+          if (best) break;
+        }
         out.push(best ? { lon: best.c[0], lat: best.c[1] } : null);
         if (best) ok++;
       } catch {
         out.push(null);
       }
     }
-    log(`stops ${ride.lines.slice(0, 2).join("/")}: ${ok}/${n} 찾음${ok < n ? ` (못 찾음: ${ride.stops.filter((_, i) => !out[i]).slice(0, 4).join(", ")})` : ""}`);
+    log(`stops ${ride.lines.slice(0, 2).join("/")}: ${ok}/${n} 찾음${exact ? " (노선정보)" : ""}${ok < n ? ` (못 찾음: ${ride.stops.filter((_, i) => !out[i]).slice(0, 4).join(", ")})` : ""}`);
     return out;
   };
 }
