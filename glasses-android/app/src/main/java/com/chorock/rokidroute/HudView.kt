@@ -146,6 +146,11 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     var wifiNote: String? = null
         set(value) { field = value; invalidate() }
 
+    /** Wi-Fi 를 켜는·기다리는 중이면 가운데 작은 모달 (제목, 설명). 붙으면 null */
+    data class WifiModal(val title: String, val detail: String)
+    var wifiModal: WifiModal? = null
+        set(value) { field = value; invalidate() }
+
     /** 시계 (테스트에서 바꿈) */
     var clock: () -> Long = System::currentTimeMillis
 
@@ -379,6 +384,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
             leftEnd += tiny.measureText("© OpenStreetMap")
         }
         drawDeviceStatus(canvas, bottom, s.status, leftEnd + 12f)
+        wifiModal?.let { drawWifiModal(canvas, it, now) }
         canvas.restore()
 
         // 위치가 미끄러지는 중이거나 센서 방향을 쓰면 계속 다시 그림. 길안내 중이면 1초마다 (위치 경과 시간 갱신)
@@ -548,6 +554,31 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
 
     private val alightBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val offlinePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13f; color = Color.WHITE; alpha = 220; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
+    /** 가운데 작은 모달: 검정 판(안경에서 투명, 뒤 지도선만 가림) + 얇은 테두리 + 돌아가는 점 */
+    private fun drawWifiModal(canvas: Canvas, m: WifiModal, now: Long) {
+        val w = 300f; val h = 76f
+        val r = RectF((W - w) / 2, (H - h) / 2 - 10f, (W + w) / 2, (H + h) / 2 - 10f)
+        canvas.drawRoundRect(r, 10f, 10f, modalFill)
+        canvas.drawRoundRect(r, 10f, 10f, modalBorder)
+        // 진행 중 표시: 점 세 개가 차례로 밝아짐
+        val k = ((now / 400) % 3).toInt()
+        for (i in 0..2) {
+            modalDot.alpha = if (i == k) 255 else 90
+            canvas.drawCircle(r.left + 22f + i * 10f, r.top + 26f, 3f, modalDot)
+        }
+        val title = TextUtils.ellipsize(m.title, modalTitle, w - 70f, TextUtils.TruncateAt.END)
+        canvas.drawText(title, 0, title.length, r.left + 56f, r.top + 31f, modalTitle)
+        val l = layoutOf(m.detail, modalText, (w - 36f).toInt(), 2, Layout.Alignment.ALIGN_NORMAL)
+        if (l != null) { canvas.save(); canvas.translate(r.left + 18f, r.top + 42f); l.draw(canvas); canvas.restore() }
+        postInvalidateDelayed(400)
+    }
+
+    private val modalFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.BLACK }
+    private val modalBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.5f; color = green }
+    private val modalDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = green }
+    private val modalTitle = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 16f; typeface = Typeface.DEFAULT_BOLD; color = green }
+    private val modalText = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 12f; color = dim }
+
     private val boardLine = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13f; typeface = Typeface.DEFAULT_BOLD; color = green; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
     private val boardLineTime = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 13f; color = green; setShadowLayer(3f, 0f, 0f, Color.BLACK) }
 

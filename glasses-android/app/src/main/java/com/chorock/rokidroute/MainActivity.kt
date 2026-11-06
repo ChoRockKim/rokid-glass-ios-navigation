@@ -130,6 +130,14 @@ class MainActivity : Activity() {
                     WifiEnabler.Status.CANNOT_ENABLE -> "Wi-Fi 못 켬${detail?.let { " · $it" } ?: ""} · 탭하면 설정"
                     WifiEnabler.Status.CONNECTED -> null
                 }
+                // 꺼져 있어 켜는·기다리는 중이면 가운데 작은 모달로 알린다
+                hud.wifiModal = when (status) {
+                    WifiEnabler.Status.ENABLING -> HudView.WifiModal("Wi-Fi 켜는 중", "Wi-Fi 가 꺼져 있어 자동으로 켜고 있습니다")
+                    WifiEnabler.Status.WAITING_FOR_NETWORK -> HudView.WifiModal("Wi-Fi 연결 중", "iPhone 핫스팟을 켜 두면 자동으로 연결돼요")
+                    WifiEnabler.Status.CANNOT_ENABLE -> HudView.WifiModal("Wi-Fi 를 켜지 못했습니다", "${detail ?: ""} · 계속 다시 시도 · 탭하면 Wi-Fi 설정".trimStart(' ', '·'))
+                    WifiEnabler.Status.CONNECTED -> null
+                }
+                hud.wifiNote = null
                 if (status == WifiEnabler.Status.CONNECTED && was != status) client.kick()
             }
         }

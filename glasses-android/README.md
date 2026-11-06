@@ -44,6 +44,7 @@ Kotlin 안드로이드 앱. 서버(`server/`)의 WebSocket `/glass?map=1` 에 �
 - '이 출처 허용'이 꺼져 있으면 자동으로는 설정 화면을 띄우지 않는다. 메뉴 > 설정 > 업데이트에서 직접.
 
 **Wi-Fi 자동 켜기** (`WifiEnabler`): 안경은 배터리 때문에 Wi-Fi 를 꺼 두는데, 꺼져 있으면 10초마다 켜 본다. 왼쪽 아래에 `Wi-Fi 켜는 중…` / `Wi-Fi 연결 기다리는 중 · 핫스팟을 켜 두세요` / `Wi-Fi 못 켬 · 이유 · 탭하면 설정`. 켜지면 서버에 바로 다시 연결.
+- 꺼져 있어 켜는 중이거나 연결을 기다리는 동안은 화면 가운데에 작은 모달(`Wi-Fi 켜는 중` / `Wi-Fi 연결 중` / `Wi-Fi 를 켜지 못했습니다`)이 뜨고, 연결되면 사라진다. 못 켰을 때 탭하면 Wi-Fi 설정 (0.3.22).
 - 안드로이드는 targetSdk 28 이하 앱에만 Wi-Fi 켜기를 허용하고, 본앱은 확인 없는 OTA 때문에 28로 낮출 수 없다 → **"길안내 Wi-Fi 도우미"** (`wifihelper` 모듈, targetSdk 28, 화면 없음)를 한 번 따로 설치한다. rokid-conversate 의 도우미가 이미 깔려 있으면 그것도 쓴다.
 - 그 밖에 `Settings.Global.WIFI_ON`(adb 로 WRITE_SECURE_SETTINGS 를 준 경우), `setWifiEnabled`, 숨은 API 도 차례로 시도.
 - 네트워크(핫스팟) 고르기는 시스템에 맡긴다 (저장된 iPhone 핫스팟에 자동 연결).

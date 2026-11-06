@@ -192,6 +192,21 @@ class HudViewSnapshotTest {
         }
     }
 
+    /** Wi-Fi 가 꺼져 자동으로 켜는 중: 가운데 작은 모달 (길안내 화면 위) */
+    @Test
+    fun wifiModal() {
+        val f = fixture()
+        val v = HudView(paparazzi.context) { null }
+        v.clock = { T0 }
+        v.device = HudView.Device(battery = 82, network = "연결 없음", server = false)
+        v.state = stateUpto(f, f.getJSONArray("checkpoints").getJSONObject(2).getInt("upto"))
+        v.wifiModal = HudView.WifiModal("Wi-Fi 켜는 중", "Wi-Fi 가 꺼져 있어 자동으로 켜고 있습니다")
+        paparazzi.snapshot(v, "28_wifi_enabling")
+        v.wifiModal = HudView.WifiModal("Wi-Fi 연결 중", "iPhone 핫스팟을 켜 두면 자동으로 연결돼요")
+        v.state = HudState()
+        paparazzi.snapshot(v, "29_wifi_waiting_idle")
+    }
+
     /** 폰에서 "맥도날드"로 시작 → 안경에서 지점 고르기 (서버 /route 를 실제 카카오로 돌려 받은 목록) */
     @Test
     fun chooseDestination() {
