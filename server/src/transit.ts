@@ -224,7 +224,7 @@ export function kakaoStopLocator(key: string, log: (m: string) => void) {
         continue;
       }
       try {
-        const cands = await searchStops(ride.stops[k]!, ride.kind, at(k / (n - 1)), key);
+        const cands = await searchStops(ride.stops[k]!, ride.kind, at(k / (n - 1)), key, k <= 3 ? log : undefined);
         const best = cands.map((c) => ({ c, d: offset(c) })).sort((x, y) => x.d - y.d)[0];
         out.push(best ? { lon: best.c[0], lat: best.c[1] } : null);
         if (best) ok++;
