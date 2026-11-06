@@ -34,7 +34,8 @@ test("한도 초과 오류면 자정(KST)까지 다시 부르지 않고, 안경�
   hits = 0;
   await busBoard(127.05, 37.59, "k", base);
   await busBoard(127.05, 37.59, "k", base);
-  assert.equal(hits, 3);
+  // 정류장 목록은 기억 (1번), 도착 정보도 1분 기억 (1번)
+  assert.equal(hits, 2);
   quota = true;
   hits = 0;
   const err = await p.fetch(ride).catch((e) => e);
@@ -43,7 +44,9 @@ test("한도 초과 오류면 자정(KST)까지 다시 부르지 않고, 안경�
   assert.ok(busUsage().blockedUntil);
   // 막힌 동안은 서버에 가지 않는다
   await assert.rejects(p.fetch(ride), QuotaError);
-  await assert.rejects(busBoard(127.05, 37.59, "k", base), QuotaError);
+  // 1분 안이면 기억해 둔 도착 정보로 (호출 없음), 다른 정류장은 막혀서 바로 실패
+  assert.equal((await busBoard(127.05, 37.59, "k", base))?.lines[0]?.line, "120");
+  await assert.rejects(busBoard(127.2, 37.7, "k", base), QuotaError);
   assert.equal(hits, 1);
   quota = false;
   // 2026-11-06 11:06 KST → 다음 날 0시 KST = 2026-11-06T15:00Z
@@ -52,14 +55,16 @@ test("한도 초과 오류면 자정(KST)까지 다시 부르지 않고, 안경�
 });
 
 test("정류장에서 멀수록 덜 자주, 위치가 안 오면 5분", async () => {
-  const { pollInterval, POLL_MS } = await import("./realtime.js");
+  const { pollInterval, POLL_MS, BUS_POLL_MS } = await import("./realtime.js");
   const { Navigator } = await import("./navigation.js");
   const nav = new Navigator();
   const ride = { kind: "bus" as const, board: "외대앞", lines: ["120"], boardPoint: [127.0, 37.5] as [number, number] } as never;
   const now = Date.now();
   assert.equal(pollInterval(nav, ride, now), 5 * 60_000);
   nav.lastKnownPosition = { lon: 127.0, lat: 37.501, ts: now }; // 약 110m
-  assert.equal(pollInterval(nav, ride, now), POLL_MS);
+  assert.equal(pollInterval(nav, ride, now), BUS_POLL_MS); // 버스는 정류장 근처에서도 1분
+  assert.equal(BUS_POLL_MS, 60_000);
+  assert.equal(pollInterval(nav, { ...(ride as object), kind: "subway" } as never, now), POLL_MS);
   nav.lastKnownPosition = { lon: 127.0, lat: 37.51, ts: now }; // 약 1.1km
   assert.equal(pollInterval(nav, ride, now), 60_000);
   nav.lastKnownPosition = { lon: 127.0, lat: 37.6, ts: now }; // 약 11km

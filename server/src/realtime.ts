@@ -211,16 +211,19 @@ export function realtimeReason(e: unknown): string {
 }
 
 export const POLL_MS = Number(process.env.REALTIME_POLL_MS ?? 20_000);
+/** 버스는 정류장 근처에서도 1분마다 (도착 정보가 분 단위, 버스 API 는 하루 한도가 빠듯함) */
+export const BUS_POLL_MS = 60_000;
 /**
  * 탈 정류장에서 멀면 덜 자주 부른다 (2026-11-06: 정류장과 상관없이 20초마다 불러 버스 API 하루 한도를 다 씀).
- * 500m 안 20초, 2km 안 1분, 더 멀면 3분. 위치가 10분 넘게 안 오면(폰이 위치를 안 보냄 = 안 쓰는 중) 5분
+ * 500m 안 20초(버스는 1분), 2km 안 1분, 더 멀면 3분. 위치가 10분 넘게 안 오면(폰이 위치를 안 보냄 = 안 쓰는 중) 5분
  */
 export function pollInterval(nav: Navigator, ride: RideInfo, now = Date.now()): number {
   const p = nav.lastKnownPosition;
   if (!p || (p.ts !== undefined && now - p.ts > 10 * 60_000)) return 5 * 60_000;
-  if (!ride.boardPoint) return POLL_MS;
+  const near = ride.kind === "bus" ? BUS_POLL_MS : POLL_MS;
+  if (!ride.boardPoint) return near;
   const d = distanceM([p.lon, p.lat], ride.boardPoint);
-  return d <= 500 ? POLL_MS : d <= 2000 ? 60_000 : 180_000;
+  return d <= 500 ? near : d <= 2000 ? 60_000 : 180_000;
 }
 const FAIL_BACKOFF_MS = 120_000;
 

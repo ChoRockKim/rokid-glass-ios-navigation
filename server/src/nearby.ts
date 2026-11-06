@@ -2,7 +2,7 @@
 // 버스: 서울 정류소정보조회(getStationByPos → getStationByUid, 정류장의 모든 노선)
 // 지하철: 카카오 카테고리 검색(SW8)으로 가까운 역 → 서울 실시간 지하철(realtimeStationArrival, 역의 모든 열차)
 import { searchCategory } from "./kakao.js";
-import { busGet, getText, parseEta, QuotaError, shortSubwayMsg, stationName, SUBWAY_IDS, xmlItems } from "./realtime.js";
+import { BUS_POLL_MS, busGet, getText, parseEta, QuotaError, shortSubwayMsg, stationName, SUBWAY_IDS, xmlItems } from "./realtime.js";
 
 export interface NearbyBoard {
   kind: "bus" | "subway";
@@ -53,6 +53,7 @@ const short = (e: unknown) => {
 };
 
 const STOPS_TTL_MS = 10 * 60_000;
+const arrivalsCache = new Map<string, { at: number; list: Record<string, string>[] }>();
 const stopsCache = new Map<string, { at: number; stops: Record<string, string>[] }>();
 
 export async function busBoard(lon: number, lat: number, key: string, base = "http://ws.bus.go.kr/api/rest"): Promise<NearbyBoard | null> {
@@ -70,11 +71,21 @@ export async function busBoard(lon: number, lat: number, key: string, base = "ht
   }
   const near = [...stops].sort((a, b) => Number(a.dist ?? 1e9) - Number(b.dist ?? 1e9))[0];
   if (!near?.arsId) return null;
-  const list = await items("stationinfo/getStationByUid", { arsId: String(near.arsId) });
+  // 도착 정보는 정류장마다 1분 기억 (안경은 20초마다 새로고침하지만 표시는 분 단위). 기억한 걸 줄 땐 지난 시간만큼 뺀다
+  const ars = String(near.arsId);
+  const cached = arrivalsCache.get(ars);
+  const fresh = cached && Date.now() - cached.at < BUS_POLL_MS;
+  const list = fresh ? cached.list : await items("stationinfo/getStationByUid", { arsId: ars });
+  if (!fresh) arrivalsCache.set(ars, { at: Date.now(), list });
+  const age = fresh ? Math.floor((Date.now() - cached.at) / 1000) : 0;
   const rows = list.flatMap((x) =>
     [x.arrmsg1, x.arrmsg2]
       .filter((m): m is string => Boolean(m) && !/운행종료|출발대기/.test(String(m)))
-      .map((m) => ({ line: String(x.rtNm ?? ""), sec: parseEta(m), text: when(parseEta(m), m), exact: parseEta(m) !== null })),
+      .map((m) => {
+        const raw = parseEta(m);
+        const sec = raw === null ? null : Math.max(0, raw - age);
+        return { line: String(x.rtNm ?? ""), sec, text: when(sec, m), exact: sec !== null };
+      }),
   );
   return { kind: "bus", name: String(near.stationNm ?? ""), distance: near.dist ? Math.round(Number(near.dist)) : null, lines: group(rows) };
 }
