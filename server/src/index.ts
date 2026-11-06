@@ -86,7 +86,8 @@ const roads = new RoadFeed(nav, log);
 const ota = new Ota(process.env.APP_DIR ?? "/data/app", process.env.OTA_UPLOAD_TOKEN ?? "", [GLASS_TOKEN, GLASS_DEVICE_TOKEN].filter(Boolean), log);
 const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, extraTokens: GLASS_DEVICE_TOKEN ? [GLASS_DEVICE_TOKEN] : [], nav, log, api, onPositions: api?.ingest, onReroute: api?.rerouteNow, roads, ota, chooser, favorites: api ? { list: api.favoritesForGlasses, go: api.goFavorite } : undefined, voice: api?.goVoice,
   nearby: () => nearbyBoards(nav.lastKnownPosition, { kakao: KAKAO_REST_KEY, bus: process.env.DATA_GO_KR_KEY, subway: process.env.SEOUL_SUBWAY_KEY }, log) });
-const stopPoller = startRealtimePoller(nav, providersFromEnv(log), log);
+// 안경 앱(?choose=1 로 연결)이 붙어 있을 때만 실시간 조회. "버스·지하철 시간" 메뉴는 연 동안만 안경이 요청한다
+const stopPoller = startRealtimePoller(nav, providersFromEnv(log), log, () => chooser.available);
 
 if (SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {
   slack = await startSlack({ botToken: SLACK_BOT_TOKEN, appToken: SLACK_APP_TOKEN, nav, kakaoKey: KAKAO_REST_KEY, log, notifyUser: process.env.SLACK_NOTIFY_USER });

@@ -67,3 +67,25 @@ test("정류장에서 멀수록 덜 자주, 위치가 안 오면 5분", async ()
   nav.lastKnownPosition = { lon: 127.0, lat: 37.501, ts: now - 11 * 60_000 };
   assert.equal(pollInterval(nav, ride, now), 5 * 60_000);
 });
+
+test("안경이 안 붙어 있으면 길안내 중이어도 실시간 조회를 안 한다", async () => {
+  const { startRealtimePoller } = await import("./realtime.js");
+  const { Navigator } = await import("./navigation.js");
+  const nav = new Navigator();
+  const { readFileSync } = await import("node:fs");
+  const { parseTransit } = await import("./kakao.js");
+  const { rideStep } = await import("./transit.js");
+  // 2026-11-04 실제 카카오 대중교통 응답 (버스 421 구간)
+  const raw = JSON.parse(readFileSync(new URL("./fixtures/kakao-transit-sample.json", import.meta.url), "utf8"));
+  const place = { name: "x", address: "", x: 127, y: 37.5 };
+  nav.start({ from: place, to: place, route: { totalDistance: 1, totalTime: 1, steps: [] }, guide: [rideStep(parseTransit(raw).routes[0]!.legs[2]!)], mode: "transit", startedBy: "t" });
+  let calls = 0;
+  let on = false;
+  const stop = startRealtimePoller(nav, [{ name: "fake", supports: () => true, fetch: async () => (calls++, []) }], () => {}, () => on);
+  await new Promise((r) => setTimeout(r, 1300));
+  assert.equal(calls, 0);
+  on = true;
+  await new Promise((r) => setTimeout(r, 1300));
+  assert.equal(calls, 1);
+  stop();
+});

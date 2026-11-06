@@ -224,8 +224,12 @@ export function pollInterval(nav: Navigator, ride: RideInfo, now = Date.now()): 
 }
 const FAIL_BACKOFF_MS = 120_000;
 
-/** 활성 경로의 다음 탑승 구간을 주기적으로 조회한다. 탈 게 없으면 아무것도 안 부른다 */
-export function startRealtimePoller(nav: Navigator, providers: ArrivalProvider[], log: (m: string) => void) {
+/** 길안내 중이고 안경을 보고 있을 때만, 다음 탑승 구간을 주기적으로 조회한다. 탈 게 없으면 아무것도 안 부른다 */
+/**
+ * watching: 안경 앱이 켜져 서버에 붙어 있는지. 꺼져 있으면 아무도 안 보니 부르지 않는다
+ * (2026-11-06: 아침에 시작한 경로가 남아 있는 동안 안경을 안 쓰는데도 계속 조회)
+ */
+export function startRealtimePoller(nav: Navigator, providers: ArrivalProvider[], log: (m: string) => void, watching: () => boolean = () => true) {
   if (!providers.length) {
     log("실시간 도착: 키가 없어 꺼짐 (SEOUL_SUBWAY_KEY, DATA_GO_KR_KEY)");
     return () => {};
@@ -238,7 +242,7 @@ export function startRealtimePoller(nav: Navigator, providers: ArrivalProvider[]
 
   const tick = async () => {
     const up = nav.upcomingRide();
-    if (!up?.step.ride || busy) return;
+    if (!up?.step.ride || busy || !watching()) return;
     // 새 탑승 구간이면 바로, 아니면 POLL_MS 마다
     if (up.step === lastStep && Date.now() - lastAt < pollInterval(nav, up.step.ride)) return;
     const provider = providers.find((p) => p.supports(up.step.ride!));
