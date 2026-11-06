@@ -9,7 +9,7 @@ import { dispatcher } from "./proxy.js";
 import { faultOn, InjectedFault } from "./faults.js";
 import type { Arrival, GuideStep, RideInfo } from "./guide.js";
 import type { Navigator } from "./navigation.js";
-import { distanceM } from "./guide.js";
+import { distanceM, distToLine } from "./guide.js";
 
 export interface ArrivalProvider {
   name: string;
@@ -329,5 +329,43 @@ export function seoulRouteStops(key: string, base = "http://ws.bus.go.kr/api/res
       }
     }
     return out;
+  };
+}
+
+/**
+ * 서울 버스 정류장 실제 좌표를 정류소정보조회(getStationByPos, 이미 쓰는 API)로: 버스 경로선을 따라 SAMPLE_M 마다
+ * 반경 RADIUS_M 안 정류장을 받아 이름으로 맞춘다. 같은 이름이 여럿이면(길 건너 반대 방향) 경로선에 가까운 쪽.
+ * 구간 길이 5km 면 약 9번. 찾은 건 StopCache 가 기억하므로 같은 노선 정류장은 처음 한 번만
+ */
+export function seoulStopsAlong(key: string, base = "http://ws.bus.go.kr/api/rest") {
+  const SAMPLE_M = 600;
+  const RADIUS_M = 400;
+  const flat = (t: string) => String(t ?? "").replace(/[\s.·()]/g, "");
+  return async (ride: { stops: string[] }, points: [number, number][]): Promise<({ lon: number; lat: number } | null)[] | null> => {
+    if (points.length < 2 || ride.stops.length < 3) return null;
+    const samples: [number, number][] = [points[0]!];
+    let acc = 0;
+    for (let i = 1; i < points.length; i++) {
+      acc += distanceM(points[i - 1]!, points[i]!);
+      if (acc >= SAMPLE_M) { samples.push(points[i]!); acc = 0; }
+    }
+    samples.push(points[points.length - 1]!);
+    const found = new Map<string, [number, number][]>();
+    for (const s of samples) {
+      const q = new URLSearchParams({ tmX: String(s[0]), tmY: String(s[1]), radius: String(RADIUS_M), resultType: "json" });
+      const text = await busGet(`${base}/stationinfo/getStationByPos?serviceKey=${key}&${q}`);
+      const list = text.trim().startsWith("{") ? ((JSON.parse(text).msgBody?.itemList ?? []) as Record<string, string>[]) : xmlItems(text, "itemList");
+      for (const x of list) {
+        if (!x.stationNm || !x.gpsX || !x.gpsY) continue;
+        const k = flat(x.stationNm);
+        found.set(k, [...(found.get(k) ?? []), [Number(x.gpsX), Number(x.gpsY)]]);
+      }
+    }
+    const near = (p: [number, number]) => distToLine(p, points);
+    return ride.stops.map((name, k) => {
+      if (k === 0 || k === ride.stops.length - 1) return null;
+      const c = (found.get(flat(name)) ?? []).sort((a, b) => near(a) - near(b))[0];
+      return c ? { lon: c[0], lat: c[1] } : null;
+    });
   };
 }

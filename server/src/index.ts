@@ -4,7 +4,7 @@ import { Navigator, type SavedRoute } from "./navigation.js";
 import { startGlassServer } from "./glass.js";
 import { createApi } from "./api.js";
 import { RoadFeed } from "./roads.js";
-import { providersFromEnv, seoulRouteStops, startRealtimePoller } from "./realtime.js";
+import { providersFromEnv, seoulRouteStops, seoulStopsAlong, startRealtimePoller } from "./realtime.js";
 import { startSlack } from "./slack.js";
 import { Pairing } from "./pairing.js";
 import { Ota } from "./ota.js";
@@ -44,6 +44,7 @@ nav.stopLocator = kakaoStopLocator(
   log,
   process.env.DATA_GO_KR_KEY ? seoulRouteStops(process.env.DATA_GO_KR_KEY, undefined, log) : undefined,
   new StopCache(process.env.STOPS_FILE ?? "/data/stops.json"),
+  process.env.DATA_GO_KR_KEY ? seoulStopsAlong(process.env.DATA_GO_KR_KEY) : undefined,
 );
 const chooser = new Chooser();
 const favorites = new Favorites(process.env.FAVORITES_FILE ?? "/data/favorites.json");

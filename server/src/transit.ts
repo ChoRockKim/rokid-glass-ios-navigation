@@ -3,7 +3,7 @@
 import { searchStops, transitRoutes, walkRoute, type LonLat, type Place, type TransitLeg, type TransitRoute, type WalkRoute } from "./kakao.js";
 import { buildGuide, formatDistance, line2For, type GuideStep } from "./guide.js";
 import { resolvePair, type ChoosePlace, type PlaceInput } from "./planner.js";
-import { distanceM } from "./guide.js";
+import { distanceM, distToLine } from "./guide.js";
 import { StopCache } from "./stopcache.js";
 
 export interface TransitPlan {
@@ -200,6 +200,8 @@ export function kakaoStopLocator(
   log: (m: string) => void,
   routeStops?: (ride: { stops: string[]; lines: string[] }, points: LonLat[]) => Promise<({ lon: number; lat: number } | null)[] | null>,
   cache?: StopCache,
+  /** 서울 정류소정보조회로 경로선 주변 정류장의 실제 좌표 (노선정보가 안 될 때) */
+  alongStops?: (ride: { stops: string[] }, points: LonLat[]) => Promise<({ lon: number; lat: number } | null)[] | null>,
 ) {
   return async (ride: { kind: "bus" | "subway"; stops: string[]; lines: string[] }, points: LonLat[]): Promise<({ lon: number; lat: number } | null)[]> => {
     if (points.length < 2) return ride.stops.map(() => null);
@@ -214,20 +216,7 @@ export function kakaoStopLocator(
       return [points[i - 1]![0] + (points[i]![0] - points[i - 1]![0]) * k, points[i - 1]![1] + (points[i]![1] - points[i - 1]![1]) * k];
     };
     // 경로선까지 거리: 선분까지 (꼭짓점까지로 재면 긴 직선 구간에서 멀게 나와 다 버려졌다, 2026-11-06)
-    const kx = 111_320 * Math.cos((points[0]![1] * Math.PI) / 180);
-    const ky = 110_540;
-    const offset = (p: LonLat) => {
-      let best = Infinity;
-      for (let i = 1; i < points.length; i++) {
-        const ax = (points[i - 1]![0] - p[0]) * kx, ay = (points[i - 1]![1] - p[1]) * ky;
-        const bx = (points[i]![0] - p[0]) * kx, by = (points[i]![1] - p[1]) * ky;
-        const dx = bx - ax, dy = by - ay;
-        const l2 = dx * dx + dy * dy;
-        const t = l2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
-        best = Math.min(best, Math.hypot(ax + t * dx, ay + t * dy));
-      }
-      return best;
-    };
+    const offset = (p: LonLat) => distToLine(p, points);
     const n = ride.stops.length;
     const out: ({ lon: number; lat: number } | null)[] = [];
     let ok = 0;
@@ -235,9 +224,15 @@ export function kakaoStopLocator(
     const line = ride.lines[0] ?? "";
     const keyOf = (k: number) => StopCache.key(ride.kind, line, ride.stops[k]!);
     const remembered = ride.stops.map((_, k) => (k === 0 || k === n - 1 ? undefined : cache?.get(keyOf(k))));
-    const allRemembered = n > 2 && remembered.slice(1, -1).every((x) => x !== undefined);
+    // 어림 위치(카카오)만 기억하고 있으면 정확한 위치를 먼저 다시 찾아 본다
+    const allRemembered = n > 2 && remembered.slice(1, -1).every((x, i) => x !== undefined && !cache?.isApprox(keyOf(i + 1)));
     // 서울 버스는 노선 정류장 목록(정확한 좌표)부터. 안 되면(키에 노선정보조회가 없거나 한도) 카카오로
-    const exact = ride.kind === "bus" && routeStops && !allRemembered ? await routeStops(ride, points).catch((e) => (log(`stops 노선정보조회 실패: ${e instanceof Error ? e.message : String(e)}`), null)) : null;
+    let exact = ride.kind === "bus" && routeStops && !allRemembered ? await routeStops(ride, points).catch((e) => (log(`stops 노선정보조회 실패: ${e instanceof Error ? e.message : String(e)}`), null)) : null;
+    let source = exact ? "노선정보" : "";
+    if (!exact && ride.kind === "bus" && alongStops && !allRemembered) {
+      exact = await alongStops(ride, points).catch((e) => (log(`stops 정류소정보조회 실패: ${e instanceof Error ? e.message : String(e)}`), null));
+      if (exact) source = "정류소정보";
+    }
     let fromCache = 0;
     for (let k = 0; k < n; k++) {
       if (k === 0 || k === n - 1) {
@@ -247,14 +242,14 @@ export function kakaoStopLocator(
         continue;
       }
       const mem = remembered[k];
+      const known = exact?.[k];
+      if (known) { out.push(known); ok++; cache?.set(keyOf(k), [known.lon, known.lat]); continue; }
       if (mem !== undefined) {
         out.push(mem ? { lon: mem[0], lat: mem[1] } : null);
         if (mem) ok++;
         fromCache++;
         continue;
       }
-      const known = exact?.[k];
-      if (known) { out.push(known); ok++; cache?.set(keyOf(k), [known.lon, known.lat]); continue; }
       try {
         const name = ride.stops[k]!;
         // "청계벽산아파트.텐즈힐아파트" 처럼 두 이름이면 앞 이름도
@@ -267,13 +262,13 @@ export function kakaoStopLocator(
         }
         out.push(best ? { lon: best.c[0], lat: best.c[1] } : null);
         if (best) ok++;
-        cache?.set(keyOf(k), best ? best.c : null);
+        cache?.set(keyOf(k), best ? best.c : null, !!best && ride.kind === "bus");
       } catch {
         out.push(null); // 오류는 기억하지 않음 (다음에 다시)
       }
     }
     cache?.flush();
-    log(`stops ${ride.lines.slice(0, 2).join("/")}: ${ok}/${n} 찾음${exact ? " (노선정보)" : ""}${fromCache ? ` (기억 ${fromCache})` : ""}${ok < n ? ` (못 찾음: ${ride.stops.filter((_, i) => !out[i]).slice(0, 4).join(", ")})` : ""}`);
+    log(`stops ${ride.lines.slice(0, 2).join("/")}: ${ok}/${n} 찾음${source ? ` (${source})` : ""}${fromCache ? ` (기억 ${fromCache})` : ""}${ok < n ? ` (못 찾음: ${ride.stops.filter((_, i) => !out[i]).slice(0, 4).join(", ")})` : ""}`);
     return out;
   };
 }

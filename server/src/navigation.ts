@@ -583,8 +583,8 @@ export class Navigator {
     if (!find) return;
     a.guide.forEach((g, i) => {
       const r = g.ride;
-      // 다 찾아 둔 구간은 건너뜀 (재시작 뒤 복원한 경로). 덜 찾았으면 다시
-      if (!r || r.stops.length < 2 || (r.marks && r.marks.length >= r.stops.length)) return;
+      // 재시작 뒤 복원한 경로도 다시 (기억해 둔 위치는 호출 없이 바로, 어림 위치는 정확한 위치로 바뀔 수 있음)
+      if (!r || r.stops.length < 2) return;
       void find(r, g.points)
         .then((found) => {
           if (this.active !== a) return;

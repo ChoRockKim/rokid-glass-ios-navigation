@@ -208,3 +208,21 @@ export function buildGuide(steps: Step[]): GuideStep[] {
 export function formatDistance(m: number): string {
   return m >= 1000 ? `${(m / 1000).toFixed(1)}km` : `${Math.round(m)}m`;
 }
+
+/** 점에서 선(꼭짓점 목록)까지 가장 가까운 거리 m (선분 기준) */
+export function distToLine(p: LonLat, line: LonLat[]): number {
+  if (!line.length) return Infinity;
+  const kx = 111_320 * Math.cos((p[1] * Math.PI) / 180);
+  const ky = 110_540;
+  if (line.length === 1) return distanceM(p, line[0]!);
+  let best = Infinity;
+  for (let i = 1; i < line.length; i++) {
+    const ax = (line[i - 1]![0] - p[0]) * kx, ay = (line[i - 1]![1] - p[1]) * ky;
+    const bx = (line[i]![0] - p[0]) * kx, by = (line[i]![1] - p[1]) * ky;
+    const dx = bx - ax, dy = by - ay;
+    const l2 = dx * dx + dy * dy;
+    const t = l2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
+    best = Math.min(best, Math.hypot(ax + t * dx, ay + t * dy));
+  }
+  return best;
+}

@@ -3,7 +3,8 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-type Entry = { p: [number, number] | null; at: number };
+/** approx = 정류장 이름이 된 곳(카카오)으로 어림한 위치 → 하루만 기억하고 정확한 위치를 다시 찾는다 */
+type Entry = { p: [number, number] | null; at: number; approx?: boolean };
 
 export const MISS_TTL_MS = 24 * 3600_000;
 const MAX_ENTRIES = 5000;
@@ -31,13 +32,18 @@ export class StopCache {
   get(key: string): [number, number] | null | undefined {
     const e = this.map.get(key);
     if (!e) return undefined;
-    if (e.p === null && this.now() - e.at > MISS_TTL_MS) return undefined;
+    if ((e.p === null || e.approx) && this.now() - e.at > MISS_TTL_MS) return undefined;
     return e.p;
   }
 
-  set(key: string, p: [number, number] | null) {
+  /** 어림한 위치인지 (정확한 위치를 찾을 수 있으면 다시 찾는다) */
+  isApprox(key: string) {
+    return this.map.get(key)?.approx === true;
+  }
+
+  set(key: string, p: [number, number] | null, approx = false) {
     this.map.delete(key);
-    this.map.set(key, { p, at: this.now() });
+    this.map.set(key, { p, at: this.now(), ...(approx ? { approx: true } : {}) });
     while (this.map.size > MAX_ENTRIES) this.map.delete(this.map.keys().next().value!);
     this.dirty = true;
   }

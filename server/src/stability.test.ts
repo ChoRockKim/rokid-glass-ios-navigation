@@ -84,3 +84,34 @@ test("음성 검색은 한 번에 하나 (고르는 중에 또 오면 거절)", 
   release("");
   assert.match(await again, /못 알아들었어요/);
 });
+
+test("정류소정보로 경로선 주변 정류장의 실제 좌표 (같은 이름 반대편은 경로선 가까운 쪽), 어림 위치는 정확한 위치로 바뀜", async () => {
+  const { createServer } = await import("node:http");
+  const { seoulStopsAlong, resetBusQuota } = await import("./realtime.js");
+  const { StopCache } = await import("./stopcache.js");
+  const { kakaoStopLocator } = await import("./transit.js");
+  resetBusQuota();
+  let hits = 0;
+  const srv = createServer((_req, res) => {
+    hits++;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ msgBody: { itemList: [
+      { stationNm: "황학동주민센터", gpsX: "127.0201", gpsY: "37.57045" }, // 경로선 바로 옆
+      { stationNm: "황학동주민센터", gpsX: "127.0199", gpsY: "37.5712" }, // 길 건너 반대편 (약 90m)
+      { stationNm: "다른정류장", gpsX: "127.0", gpsY: "37.57" },
+    ] } }));
+  });
+  await new Promise<void>((r) => srv.listen(0, r));
+  const along = seoulStopsAlong("k", `http://127.0.0.1:${(srv.address() as { port: number }).port}`);
+  const line: [number, number][] = [[127.014, 37.5704], [127.026, 37.5704]]; // 약 1km
+  const out = await along({ stops: ["A", "황학동주민센터", "B"] }, line);
+  assert.deepEqual(out, [null, { lon: 127.0201, lat: 37.57045 }, null]);
+  assert.ok(hits >= 2 && hits <= 4, `호출 ${hits}`);
+  // 어림 위치로 기억해 둔 것이 있어도 정확한 위치로 바꾼다
+  const cache = new StopCache(null);
+  cache.set(StopCache.key("bus", "241", "황학동주민센터"), [127.02, 37.57], true);
+  const found = await kakaoStopLocator("k", () => {}, undefined, cache, along)({ kind: "bus", stops: ["A", "황학동주민센터", "B"], lines: ["241"] }, line);
+  assert.deepEqual(found[1], { lon: 127.0201, lat: 37.57045 });
+  assert.equal(cache.isApprox(StopCache.key("bus", "241", "황학동주민센터")), false);
+  srv.close();
+});
