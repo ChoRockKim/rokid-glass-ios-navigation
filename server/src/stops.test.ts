@@ -145,3 +145,11 @@ test("탑승·하차 정류장만 찾았을 때: 타자마자 '다음 정류장 
   assert.ok(!m.ride!.alightAlert, String(m.ride!.alightAlert));
   assert.equal(m.ride!.nextStop, undefined);
 });
+
+test("긴 직선 구간 가운데의 정류장도 찾는다 (경로선 꼭짓점이 아니라 선분까지 거리)", async () => {
+  const { kakaoStopLocator } = await import("./transit.js");
+  // 꼭짓점 둘(약 1km 떨어짐), 그 가운데에서 44m 옆에 황학동주민센터
+  const line: [number, number][] = [[127.014, 37.5704], [127.026, 37.5704]];
+  const found = await kakaoStopLocator("k", () => {})({ kind: "bus", stops: ["A", "황학동주민센터", "B"], lines: ["241"] }, line);
+  assert.deepEqual(found[1], { lon: 127.02, lat: 37.57 });
+});

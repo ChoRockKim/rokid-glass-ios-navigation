@@ -211,10 +211,19 @@ export function kakaoStopLocator(
       const k = (t - cum[i - 1]!) / seg;
       return [points[i - 1]![0] + (points[i]![0] - points[i - 1]![0]) * k, points[i - 1]![1] + (points[i]![1] - points[i - 1]![1]) * k];
     };
-    // 경로선까지 거리 (대충: 점들 사이 선분 중 가장 가까운 것)
+    // 경로선까지 거리: 선분까지 (꼭짓점까지로 재면 긴 직선 구간에서 멀게 나와 다 버려졌다, 2026-11-06)
+    const kx = 111_320 * Math.cos((points[0]![1] * Math.PI) / 180);
+    const ky = 110_540;
     const offset = (p: LonLat) => {
       let best = Infinity;
-      for (let i = 0; i < points.length; i += Math.max(1, Math.floor(points.length / 400))) best = Math.min(best, distanceM(p, points[i]!));
+      for (let i = 1; i < points.length; i++) {
+        const ax = (points[i - 1]![0] - p[0]) * kx, ay = (points[i - 1]![1] - p[1]) * ky;
+        const bx = (points[i]![0] - p[0]) * kx, by = (points[i]![1] - p[1]) * ky;
+        const dx = bx - ax, dy = by - ay;
+        const l2 = dx * dx + dy * dy;
+        const t = l2 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
+        best = Math.min(best, Math.hypot(ax + t * dx, ay + t * dy));
+      }
       return best;
     };
     const n = ride.stops.length;
