@@ -4,8 +4,20 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- 오른쪽 아래 네트워크 표시 (Wi-Fi / 셀룰러 / 연결 없음) -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- 메뉴 > 업데이트: 서버에서 받은 새 APK 설치 (시스템 확인 창이 뜬다) -->
+    <!-- 자동 업데이트(OTA): 새 APK 를 확인 창 없이 스스로 설치 (Updater, rokid-conversate 와 같음) -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION" />
+    <!-- 업데이트 뒤 앱을 다시 띄우기 (UpdateReceiver, 백그라운드 화면 시작). adb: appops set <pkg> SYSTEM_ALERT_WINDOW allow -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Wi-Fi 가 꺼져 있으면 켠다 (WifiEnabler). WRITE_SECURE_SETTINGS 는 adb 로 줄 때만 쓰인다 -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <!-- Wi-Fi 켜기 도우미 (이 앱의 wifihelper, 또는 rokid-conversate 것) -->
+    <queries>
+        <package android:name="com.chorock.rokidroute.wifihelper" />
+        <package android:name="com.chorockkim.conversate.wifihelper" />
+    </queries>
 
     <application
         android:allowBackup="false"
@@ -23,6 +35,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <receiver
+            android:name=".UpdateReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.chorock.rokidroute.INSTALL_STATUS" />
+            </intent-filter>
+        </receiver>
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

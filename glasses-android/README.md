@@ -37,6 +37,18 @@ Kotlin 안드로이드 앱. 서버(`server/`)의 WebSocket `/glass?map=1` 에 �
 - 링 탭 → `ACTION_CLICK` → 선택, 더블탭 → 뒤로(`GLOBAL_ACTION_BACK`) → 메뉴 (메뉴에서 한 번 더 = 앱 종료)
 - 스와이프 제스처로 떨어질 때는 세로 플링을 다음/이전으로, Stable 모드(미디어 키)는 위 표대로.
 
+## 자동 업데이트 · Wi-Fi 자동 켜기 (0.3.21, rokid-conversate 와 같은 방식)
+**자동 업데이트**: 서버에 연결되면(그 뒤 6시간마다) 새 버전을 확인하고, 있으면 PackageInstaller 세션 + `USER_ACTION_NOT_REQUIRED` 로 **확인 창 없이** 설치한 뒤 앱이 다시 켜진다 (`Updater`, `UpdateReceiver`).
+- 길안내 중이거나 메뉴가 열려 있으면 미루고, 안내가 끝나면(경로 없음·도착) 설치.
+- 조건 (rokid-conversate 실기 기준): Android 12+, '이 출처 허용' 켜짐, 이 앱이 설치자로 기록됨. 처음 한 번은 확인 창이 뜰 수 있다 (시스템이 확인을 요구하면 그 창을 띄움). 그 뒤로는 이 앱이 직접 설치했으므로 설치자로 기록된다 (미확인).
+- '이 출처 허용'이 꺼져 있으면 자동으로는 설정 화면을 띄우지 않는다. 메뉴 > 설정 > 업데이트에서 직접.
+
+**Wi-Fi 자동 켜기** (`WifiEnabler`): 안경은 배터리 때문에 Wi-Fi 를 꺼 두는데, 꺼져 있으면 10초마다 켜 본다. 왼쪽 아래에 `Wi-Fi 켜는 중…` / `Wi-Fi 연결 기다리는 중 · 핫스팟을 켜 두세요` / `Wi-Fi 못 켬 · 이유 · 탭하면 설정`. 켜지면 서버에 바로 다시 연결.
+- 안드로이드는 targetSdk 28 이하 앱에만 Wi-Fi 켜기를 허용하고, 본앱은 확인 없는 OTA 때문에 28로 낮출 수 없다 → **"길안내 Wi-Fi 도우미"** (`wifihelper` 모듈, targetSdk 28, 화면 없음)를 한 번 따로 설치한다. rokid-conversate 의 도우미가 이미 깔려 있으면 그것도 쓴다.
+- 그 밖에 `Settings.Global.WIFI_ON`(adb 로 WRITE_SECURE_SETTINGS 를 준 경우), `setWifiEnabled`, 숨은 API 도 차례로 시도.
+- 네트워크(핫스팟) 고르기는 시스템에 맡긴다 (저장된 iPhone 핫스팟에 자동 연결).
+- 릴리스 빌드: `scripts/release.sh` 가 `build/rokid-route-wifihelper.apk` 도 만든다.
+
 ## 메뉴 · OTA 업데이트
 뒤로 가기 → 메뉴 (0.3.20 부터 묶음, 안내 중일 때만 "안내 ▸"):
 | 메인 | 안의 항목 |

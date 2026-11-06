@@ -25,6 +25,9 @@ $GRADLE --no-daemon -q ${GRADLE_INIT:+-I "$GRADLE_INIT"} assembleRelease \
 APK=app/build/outputs/apk/release/app-release.apk
 [ -s "$APK" ] || { echo "빌드 실패"; exit 1; }
 OUT="build/rokid-route-glasses-$NAME.apk"; mkdir -p build; cp "$APK" "$OUT"; echo "built $OUT ($(wc -c < "$OUT") bytes)"
+# Wi-Fi 켜기 도우미 (따로 한 번 설치, 바뀔 일이 거의 없음)
+HELPER=wifihelper/build/outputs/apk/release/wifihelper-release.apk
+[ -s "$HELPER" ] && cp "$HELPER" build/rokid-route-wifihelper.apk && echo "built build/rokid-route-wifihelper.apk"
 if [ "$UPLOAD" = "--upload" ]; then
   curl -sS --fail-with-body -X PUT "$SERVER/app/upload?versionCode=$CODE&versionName=$NAME" \
     -H "Authorization: Bearer ${OTA_UPLOAD_TOKEN:?OTA_UPLOAD_TOKEN 필요}" --data-binary @"$OUT"; echo

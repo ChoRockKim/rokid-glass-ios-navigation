@@ -3,6 +3,7 @@ package com.chorock.rokidroute
 import android.app.Activity
 import android.content.Context
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.Gravity
@@ -26,6 +27,10 @@ class MainActivity : Activity() {
     private var lastCalib: MapPos? = null
     private lateinit var prefs: android.content.SharedPreferences
     private lateinit var cache: GlassCache
+    private lateinit var wifi: WifiEnabler
+    private var wifiStatus: WifiEnabler.Status? = null
+    /** 자동 설치를 이미 시도한 버전 (실패해도 같은 버전을 계속 시도하지 않게) */
+    private var autoInstallTried: Int? = null
     private var checkedUpdate = false
 
     private fun distM(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
@@ -105,6 +110,7 @@ class MainActivity : Activity() {
         )
         updater = Updater(this, BuildConfig.SERVER_BASE, token = { prefs.getString("glassToken", null) ?: BuildConfig.DEVICE_TOKEN.takeIf { it.isNotEmpty() } }) { note ->
             hud.update = updater.available?.versionName
+            maybeAutoInstall()
             // 메인 메뉴·설정 화면이면 "업데이트 설치 (…)"·"설정 ●" 를 바로 바꾸고 알림
             if (sub == null || sub is Sub.Group) hud.menu = hud.menu?.let { it.copy(items = menuLabels(), note = note) }
         }
@@ -113,6 +119,20 @@ class MainActivity : Activity() {
             override fun run() { updater.check(); hud.postDelayed(this, 6 * 3600_000L) }
         }
         hud.postDelayed(recheck, 6 * 3600_000L)
+        // Wi-Fi 자동 켜기 (rokid-conversate 와 같은 방식): 꺼져 있으면 10초마다 켜 보고, 상태는 왼쪽 아래에
+        wifi = WifiEnabler(this) { status, detail ->
+            hud.post {
+                val was = wifiStatus
+                wifiStatus = status
+                hud.wifiNote = when (status) {
+                    WifiEnabler.Status.ENABLING -> "Wi-Fi 켜는 중…"
+                    WifiEnabler.Status.WAITING_FOR_NETWORK -> "Wi-Fi 연결 기다리는 중 · 핫스팟을 켜 두세요"
+                    WifiEnabler.Status.CANNOT_ENABLE -> "Wi-Fi 못 켬${detail?.let { " · $it" } ?: ""} · 탭하면 설정"
+                    WifiEnabler.Status.CONNECTED -> null
+                }
+                if (status == WifiEnabler.Status.CONNECTED && was != status) client.kick()
+            }
+        }
         val dm = resources.displayMetrics
         val screen = "${dm.widthPixels}x${dm.heightPixels} d${dm.density}"
         Log.i("Route", "server=${BuildConfig.SERVER_BASE} heading=${heading.mode} screen=$screen")
@@ -160,6 +180,7 @@ class MainActivity : Activity() {
         runCatching { connectivity.registerDefaultNetworkCallback(netCallback) }
         updateNetwork()
         heading.start()
+        wifi.start()
         client.start()
         // R08 브리지가 처음 링 조작부터 이 화면을 "현재 포커스"로 보도록 미리 포커스를 잡는다
         hud.requestFocus()
@@ -169,6 +190,7 @@ class MainActivity : Activity() {
         runCatching { unregisterReceiver(batteryReceiver) }
         runCatching { connectivity.unregisterNetworkCallback(netCallback) }
         client.stop()
+        wifi.stop()
         heading.stop()
         super.onPause()
     }
@@ -206,6 +228,7 @@ class MainActivity : Activity() {
             }
         }
         hud.state = next
+        if (m.optString("type") == "idle" || m.optString("type") == "arrived") hud.post { maybeAutoInstall() }
         when (m.optString("type")) {
             // 메뉴 "경로 다시 찾기" 결과 (이 안경에만 온다)
             "notice" -> showNotice(m.optString("text"))
@@ -374,6 +397,20 @@ class MainActivity : Activity() {
         showNotice(if (label == null) "목적지 선택 취소" else "선택: $label")
     }
 
+    /**
+     * 자동 업데이트 (rokid-conversate 와 같은 방식): 새 버전이 있으면 확인 없이 설치하고 앱이 다시 켜진다.
+     * 길안내 중에는 미루고 안내가 끝나면(경로 없음·도착) 설치. '이 출처 허용'이 꺼져 있으면 설정 화면을 갑자기 띄우지 않고
+     * 메뉴 > 설정 > 업데이트에서 직접 (그때 허용 화면으로 안내)
+     */
+    private fun maybeAutoInstall() {
+        val l = updater.available ?: return
+        if (navigating || hud.menu != null || autoInstallTried == l.versionCode) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) return
+        autoInstallTried = l.versionCode
+        showNotice("새 버전 ${l.versionName} 자동 설치 중…")
+        updater.install()
+    }
+
     private val clearNotice = Runnable { hud.notice = null }
 
     /** 메뉴가 열려 있으면 메뉴 아래 문구로, 닫혀 있으면 왼쪽 아래에 5초 */
@@ -456,7 +493,7 @@ class MainActivity : Activity() {
         if (m == null) {
             // 길안내 화면: 탭 = 화면 모양 바꾸기(전체 지도 ↔ 간소), 앞으로 = 다음 단계 미리보기, 뒤로 쓸기 = 이전, 뒤로가기 = 메인 화면
             when (input) {
-                Input.SELECT -> {
+                Input.SELECT -> if (wifiStatus == WifiEnabler.Status.CANNOT_ENABLE) wifi.openSystemSettings() else {
                     hud.viewStyle = if (hud.viewStyle == HudView.ViewStyle.FULL) HudView.ViewStyle.COMPACT else HudView.ViewStyle.FULL
                     prefs.edit().putString("viewStyle", hud.viewStyle.name).apply()
                 }

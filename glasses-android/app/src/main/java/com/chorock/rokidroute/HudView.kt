@@ -142,6 +142,10 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
     var offlineSince: Long? = null
         set(value) { field = value; invalidate() }
 
+    /** Wi-Fi 가 아직 안 붙었을 때 왼쪽 아래 문구 ("Wi-Fi 켜는 중…" 등). 붙어 있으면 null */
+    var wifiNote: String? = null
+        set(value) { field = value; invalidate() }
+
     /** 시계 (테스트에서 바꿈) */
     var clock: () -> Long = System::currentTimeMillis
 
@@ -364,7 +368,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
             now - s.lastFixAt > STALE_MS -> "위치 ${ageText(now - s.lastFixAt)}"
             else -> null
         }
-        val left = debug ?: notice ?: stale
+        val left = debug ?: notice ?: wifiNote ?: stale
         var leftEnd = 18f
         if (left != null) {
             val p = if (debug == null) small else tiny
