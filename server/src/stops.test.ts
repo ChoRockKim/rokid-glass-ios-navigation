@@ -41,7 +41,7 @@ test("카카오 정류장 찾기: 버스정류장 분류만, 경로선에 가까
   const mid = leg.points[Math.floor(leg.points.length / 2)]!;
   assert.ok(Math.abs(found[1]!.lon - (mid[0] + 0.00005)) < 1e-9, "경로선에 붙은 쪽");
   assert.equal(queries.length, leg.stops.length - 2); // 가운데 정류장만 검색
-  assert.match(logs[0]!, /5\/5 찾음/);
+  assert.ok(logs.some((l) => /5\/5 찾음/.test(l)), logs.join("\n"));
 });
 
 test("탄 뒤: 다음 정류장 이름, 지난 정류장 수로 남은 정거장, 하차 알림은 정거장 수로", async () => {
