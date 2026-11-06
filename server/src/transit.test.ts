@@ -165,6 +165,38 @@ test("하차 알림: 탑승 중 하차 지점이 가까워지면 다음 → 이�
   assert.ok(texts.has("[버스] 다음 정류장에서 하차") && texts.has("[버스] 이번 정류장에서 하차"));
 });
 
+test("같은 정류장 환승: 내려서 서 있으면 다음 버스 단계로 넘어가고, 위치가 흔들려도 하차 알림으로 돌아가지 않는다", async () => {
+  const { RIDE_ADVANCE_M } = await import("./navigation.js");
+  const { distanceM } = await import("./guide.js");
+  let now = 0;
+  const nav = new Navigator(() => now);
+  const legs = parseTransit(raw).routes[0]!.legs;
+  // 2026-11-06 실사용: 120 하차 → 같은 정류장에서 241 (중간 도보 없음). 같은 버스 구간을 두 번 이어 붙여 흉내
+  const first = rideStep(legs[2]!);
+  const pts = legs[2]!.points;
+  const second = { ...rideStep(legs[2]!), points: [pts[pts.length - 1]!, [pts[pts.length - 1]![0] + 0.01, pts[pts.length - 1]![1]] as [number, number]] };
+  second.ride = { ...second.ride!, boardPoint: second.points[0]!, board: first.ride!.alight };
+  const place = { name: "x", address: "", x: 0, y: 0 };
+  nav.start({ from: place, to: place, route: { totalDistance: 1, totalTime: 1, steps: [] }, guide: [first, second], mode: "transit", startedBy: "t" });
+  const go = (p: [number, number]) => { nav.updatePositions([{ lon: p[0], lat: p[1], acc: 5, ts: ++now }]); return nav.snapshot(); };
+  for (let i = 10; i < pts.length - 3; i++) go(pts[i] as [number, number]);
+  // 하차 지점 약 25m 앞 (정류장이 경로선 끝에 딱 닿지 않음) 에서 멈춤 → 다음 버스 단계
+  const end = pts[pts.length - 1]!;
+  let k = pts.length - 2;
+  while (k > 0 && distanceM(pts[k]!, end) < 25) k--;
+  const f = 1 - 25 / Math.max(25, distanceM(pts[k]!, end));
+  const stopAt: [number, number] = [pts[k]![0] + (end[0] - pts[k]![0]) * Math.max(0, f), pts[k]![1] + (end[1] - pts[k]![1]) * Math.max(0, f)];
+  assert.ok(RIDE_ADVANCE_M > 25);
+  let m = go(stopAt);
+  assert.ok(m.type === "step" && m.index === 1 && !m.ride?.alightAlert, JSON.stringify(m).slice(0, 200));
+  // 서 있는 동안 위치가 경계 근처에서 흔들려도 (뒤로 15m) 241 단계 그대로
+  const back15: [number, number] = [stopAt[0] + (pts[k]![0] - end[0]) * 0.3, stopAt[1] + (pts[k]![1] - end[1]) * 0.3];
+  for (let i = 0; i < 6; i++) {
+    m = go(i % 2 ? stopAt : back15);
+    assert.ok(m.type === "step" && m.index === 1, `흔들림 ${i}: ${m.type === "step" ? m.line1 : m.type}`);
+  }
+});
+
 test("최근 목적지: 같은 이름은 하나로, 최근 순, 현재 위치 제외, 최대 8", async () => {
   const { Recent, RECENT_MAX } = await import("./recent.js");
   const r = new Recent(null);

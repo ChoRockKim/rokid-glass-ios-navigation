@@ -103,8 +103,9 @@ export class RouteTracker {
   }
 
   /** 진행 거리 s 에서 보여 줄 단계: 끝까지 advanceM 보다 많이 남은 첫 단계. 다 지났으면 steps.length (도착) */
-  stepAt(s: number, advanceM: number): number {
-    const i = this.stepEnd.findIndex((end) => end - s > advanceM);
+  stepAt(s: number, advanceM: number | ((i: number) => number)): number {
+    const adv = typeof advanceM === "number" ? () => advanceM : advanceM;
+    const i = this.stepEnd.findIndex((end, k) => end - s > adv(k));
     return i === -1 ? this.stepEnd.length : i;
   }
 }

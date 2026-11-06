@@ -8,6 +8,16 @@ export { formatDistance };
 
 /** 다음 회전 지점까지 이만큼 남으면 다음 단계를 보여 준다 */
 export const ADVANCE_M = 12;
+/**
+ * 버스·지하철 구간은 하차 지점 이만큼 앞에서 다음 단계로 (정류장은 길가라 위치가 경로선 끝에 딱 닿지 않는다.
+ * 2026-11-06: 120 → 241 같은 정류장 환승에서 내린 뒤에도 120 하차 알림이 남음)
+ */
+export const RIDE_ADVANCE_M = 40;
+/**
+ * 실제 위치로 본 단계가 앞으로 넘어간 뒤에는, 경계에서 이만큼 더 뒤로 가야 이전 단계로 돌아간다
+ * (정류장에 서 있으면 위치가 1~2m 흔들려 하차 알림 ↔ 다음 버스 탑승이 왔다 갔다 했다)
+ */
+export const BACK_HYSTERESIS_M = 30;
 /** 경로선에서 이만큼 벗어나면 이탈 (정확도가 나쁘면 acc*1.5 까지 허용) */
 export const OFF_ROUTE_M = 35;
 /** 정확도가 이보다 나쁜 위치는 버린다 */
@@ -612,7 +622,14 @@ export class Navigator {
 
     if (!a.offRoute) {
       a.progress = proj.s;
-      const real = a.tracker.stepAt(proj.s, ADVANCE_M);
+      const adv = (i: number) => (a.guide[i]?.ride ? RIDE_ADVANCE_M : ADVANCE_M);
+      let real = a.tracker.stepAt(proj.s, adv);
+      const prev = a.realIndex;
+      // 한 번 넘어간 단계는 경계에서 BACK_HYSTERESIS_M 넘게 뒤로 가야 되돌린다
+      if (prev !== null && real < prev && prev <= a.guide.length) {
+        const boundary = (a.tracker.stepEnd[prev - 1] ?? 0) - adv(prev - 1);
+        if (proj.s > boundary - BACK_HYSTERESIS_M) real = prev;
+      }
       a.realIndex = real;
       let index = real;
       const hold = a.manualHold;
