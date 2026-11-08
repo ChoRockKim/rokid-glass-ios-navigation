@@ -221,6 +221,10 @@ export const ALIGHT_NOW_M = 150;
 
 /** 찾은 정류장이 버스 경로선에서 이보다 멀면 다른 곳으로 본다 */
 const STOP_MAX_OFFSET_M = 150;
+/** 지도 위치를 보낼 최소 이동 거리 · 탄 중 최소 간격 · 가만히 있어도 보내는 간격 */
+const POS_MIN_MOVE_M = 3;
+const POS_RIDE_MIN_MS = 5_000;
+const POS_KEEPALIVE_MS = 15_000;
 /** 정류장 지점을 이만큼 지나면 지난 것으로 본다 */
 const PASSED_M = 20;
 
@@ -517,17 +521,41 @@ export class Navigator {
     const next = a.index + 1 < a.guide.length ? a.index + 1 : null;
     const fix = raw ? { fixAge: 0 } : {};
     const focus = this.focusOf(a);
+    let msg: MapMessage | null = null;
     if (!a.offRoute && a.progress !== null) {
       const p = a.tracker.pointAt(a.progress);
-      if (p) return this.emitMap({ type: "map-pos", ...p, snapped: true, next, focus, ...fix });
+      if (p) msg = { type: "map-pos", ...p, snapped: true, next, focus, ...fix };
     }
-    const last = a.lastPosition;
-    const at = raw ?? last;
-    if (at) {
+    const at = raw ?? a.lastPosition;
+    if (!msg && at) {
       const heading = (this.lastMapPos?.type === "map-pos" ? this.lastMapPos.heading : 0);
-      this.emitMap({ type: "map-pos", lon: at.lon, lat: at.lat, heading, snapped: false, next, focus, ...fix });
+      msg = { type: "map-pos", lon: at.lon, lat: at.lat, heading, snapped: false, next, focus, ...fix };
+    }
+    if (msg && (!raw || this.posWorthSending(a, msg))) {
+      this.lastPosSentAt = this.now();
+      this.emitMap(msg);
     }
   }
+
+  /**
+   * 안경 배터리: 폰 위치(약 2초마다)가 올 때마다 보내지 않는다. 3m 넘게 움직였거나 방향이 15° 넘게 바뀌었거나
+   * 단계·미리보기·경로 위 여부가 바뀌었을 때만. 버스·지하철을 타고 있으면 5초에 한 번까지.
+   * 가만히 있어도 POS_KEEPALIVE_MS 마다는 보낸다 (안경은 이걸로 "위치 N초 전"을 판단, 30초 넘으면 표시)
+   */
+  private posWorthSending(a: ActiveRoute, msg: MapMessage & { type: "map-pos" }): boolean {
+    const last = this.lastMapPos;
+    if (last?.type !== "map-pos") return true;
+    const age = this.now() - this.lastPosSentAt;
+    if (age >= POS_KEEPALIVE_MS) return true;
+    if (last.next !== msg.next || last.snapped !== msg.snapped || JSON.stringify(last.focus ?? null) !== JSON.stringify(msg.focus ?? null)) return true;
+    const step = a.guide[a.index];
+    const start = a.tracker.stepStart[a.index] ?? 0;
+    const riding = !!step?.ride && a.progress !== null && a.progress - start > BOARDED_M;
+    if (riding && age < POS_RIDE_MIN_MS) return false;
+    const turn = Math.abs(((msg.heading - last.heading + 540) % 360) - 180);
+    return distanceM([last.lon, last.lat], [msg.lon, msg.lat]) >= POS_MIN_MOVE_M || turn >= 15;
+  }
+  private lastPosSentAt = 0;
 
   /** force=false 면 직전과 같은 내용(남은 거리는 10m 단위)은 보내지 않는다. 안경 화면 깜빡임 방지 */
   private emit(force = true) {

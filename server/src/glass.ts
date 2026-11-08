@@ -12,7 +12,8 @@ import type { Chooser } from "./chooser.js";
 import { VOICE_MAX_BYTES } from "./voice.js";
 
 /** 이 간격으로 ping, 다음 ping 때까지 pong 이 없으면 끊는다 (최대 2배 시간 안에 정리) */
-export const HEARTBEAT_MS = Number(process.env.GLASS_HEARTBEAT_MS ?? 15_000);
+// 30초 (안경 배터리: 안경 쪽 ping 25초와 함께 Wi-Fi 를 덜 깨운다). 죽은 연결은 최대 60초 안에 정리
+export const HEARTBEAT_MS = Number(process.env.GLASS_HEARTBEAT_MS ?? 30_000);
 
 export function startGlassServer(opts: {
   port: number;

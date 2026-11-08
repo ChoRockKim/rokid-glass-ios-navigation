@@ -58,20 +58,34 @@ class HeadingProvider(context: Context) : SensorEventListener {
         Log.i(TAG, "heading mode=$mode rotationVector=${absolute != null} game=${game != null} accel=${accel != null} magnetic=${magnetic != null}")
     }
 
+    /** 센서를 듣고 있는지 (길안내 지도가 없으면 꺼서 배터리 절약) */
+    var running = false
+        private set
+
+    /**
+     * 배터리: 게임용(약 50Hz) 대신 UI 용(약 15Hz). 지도 회전은 화면을 초당 10번까지만 다시 그리므로 충분하다.
+     * 이미 켜져 있으면 아무것도 안 함
+     */
     fun start() {
+        if (running) return
+        running = true
         when (mode) {
-            Mode.ABSOLUTE -> sm.registerListener(this, absolute, SensorManager.SENSOR_DELAY_GAME)
+            Mode.ABSOLUTE -> sm.registerListener(this, absolute, SensorManager.SENSOR_DELAY_UI)
             Mode.RELATIVE_MAG -> {
-                sm.registerListener(this, game, SensorManager.SENSOR_DELAY_GAME)
+                sm.registerListener(this, game, SensorManager.SENSOR_DELAY_UI)
                 sm.registerListener(this, accel, SensorManager.SENSOR_DELAY_UI)
                 sm.registerListener(this, magnetic, SensorManager.SENSOR_DELAY_UI)
             }
-            Mode.RELATIVE -> sm.registerListener(this, game, SensorManager.SENSOR_DELAY_GAME)
+            Mode.RELATIVE -> sm.registerListener(this, game, SensorManager.SENSOR_DELAY_UI)
             Mode.NONE -> {}
         }
     }
 
-    fun stop() = sm.unregisterListener(this)
+    fun stop() {
+        if (!running) return
+        running = false
+        sm.unregisterListener(this)
+    }
 
     /** 북 기준 방위. 아직 모르면 null */
     fun heading(): Float? {

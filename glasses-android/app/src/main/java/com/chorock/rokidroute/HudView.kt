@@ -234,6 +234,9 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         /** 실제 위치를 이보다 오래 못 받으면 "위치 N초 전" 표시 */
         const val STALE_MS = 30_000L
 
+        /** 다음 정각 분까지 ms (+50ms 여유). 시각 표시는 분 단위라 그때만 다시 그린다 */
+        fun untilNextMinute(now: Long): Long = 60_000 - now % 60_000 + 50
+
         fun ageText(ms: Long): String = if (ms < 60_000) "${ms / 1000}초 전" else "${ms / 60_000}분 전"
         fun clockText(epochMs: Long): String = java.text.SimpleDateFormat("HH:mm", java.util.Locale.KOREA).format(java.util.Date(epochMs))
     }
@@ -301,7 +304,7 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
         menu?.let { m ->
             drawMenu(canvas, m)
             canvas.restore()
-            postInvalidateDelayed(15_000) // 오른쪽 아래 시각
+            if (m.boards == null) postInvalidateDelayed(untilNextMinute(clock())) // 오른쪽 아래 시각 (분이 바뀔 때만)
             return
         }
 
@@ -394,16 +397,22 @@ class HudView(context: Context, private val headingProvider: () -> Float?) : Vie
 
         // 위치가 미끄러지는 중이거나 센서 방향을 쓰면 계속 다시 그림. 길안내 중이면 1초마다 (위치 경과 시간 갱신)
         // 위치가 미끄러지는 동안만 매 프레임. 방향 센서는 바뀔 때 headingMoved() 로 (계속 60번씩 그리지 않음)
+        // 배터리: 초 단위로 바뀌는 글자(연결 끊김 · N초, 위치 N초 전)가 있을 때만 1초마다.
+        // 그 밖에는 분이 바뀔 때(시각·도착 시각), 버스 대기 중이면 10초마다, 위치가 오래돼 표시가 생길 때
         if (glideFrom != null) postInvalidateOnAnimation()
-        else if (navigating || offlineSince != null || s.cachedAt != null) postInvalidateDelayed(1000)
-        else postInvalidateDelayed(15_000) // 오른쪽 아래 시각
+        else if (offlineSince != null || stale != null) postInvalidateDelayed(1000)
+        else if (navigating && s.waiting != null) postInvalidateDelayed(10_000)
+        else {
+            val toStale = if (navigating) s.lastFixAt?.let { it + STALE_MS + 50 - now }?.takeIf { it > 0 } else null
+            postInvalidateDelayed(minOf(untilNextMinute(now), toStale ?: Long.MAX_VALUE))
+        }
     }
 
     /** 메인 화면: 제목·버전, 항목(선택된 것만 밝게, ▶ 표시), 아래 안내 문구 */
     private fun drawMenu(canvas: Canvas, m: Menu) {
         if (m.routes != null) return drawRouteCards(canvas, m, m.routes)
         if (m.boards != null) {
-            postInvalidateDelayed(1000) // 남은 시간 줄이기
+            postInvalidateDelayed(10_000) // 남은 시간 줄이기 (분 단위 표시라 10초면 충분)
             return drawBoards(canvas, m, m.boards)
         }
         canvas.drawText(m.title ?: "길안내 · v${BuildConfig.VERSION_NAME}", 18f, 14f + 13f, small)

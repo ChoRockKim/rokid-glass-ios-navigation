@@ -38,7 +38,8 @@ class ServerClient(
     }
 
     private val http = OkHttpClient.Builder()
-        .pingInterval(10, TimeUnit.SECONDS) // 핫스팟·프록시에서 유휴 연결 유지 + 죽은 연결을 빨리 알아챔
+        // 핫스팟·프록시에서 유휴 연결 유지 + 죽은 연결 알아채기. 10초 → 25초 (배터리: Wi-Fi 를 덜 깨움, 서버 ping 은 30초)
+        .pingInterval(25, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build()
     private val main = Handler(Looper.getMainLooper())

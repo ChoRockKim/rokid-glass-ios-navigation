@@ -115,3 +115,23 @@ test("정류소정보로 경로선 주변 정류장의 실제 좌표 (같은 이
   assert.equal(cache.isApprox(StopCache.key("bus", "241", "황학동주민센터")), false);
   srv.close();
 });
+
+test("지도 위치: 3m 안 움직임은 안 보내고, 가만히 있어도 15초마다는 보낸다", async () => {
+  const { Navigator } = await import("./navigation.js");
+  let now = 0;
+  const nav = new Navigator(() => now);
+  const place = { name: "x", address: "", x: 127, y: 37.5 };
+  const step = { turn: "walk", angle: null, at: "", target: "", road: null, distance: 300, time: 200, crossings: 0, line1: "a", line2: "b", raw: [], points: [[127, 37.5], [127, 37.503]] };
+  nav.start({ from: place, to: place, route: { totalDistance: 1, totalTime: 1, steps: [] }, guide: [step as never], startedBy: "t" });
+  let sent = 0;
+  nav.onMap((m) => { if (m.type === "map-pos") sent++; });
+  const go = (m: number) => { now += 2000; nav.updatePositions([{ lon: 127, lat: 37.5 + m / 110_540, acc: 5, ts: now }]); };
+  go(10); // 첫 위치
+  assert.equal(sent, 1);
+  go(11); go(12); // 1m 씩: 안 보냄
+  assert.equal(sent, 1);
+  go(15); // 처음보다 5m
+  assert.equal(sent, 2);
+  for (let i = 0; i < 8; i++) go(15); // 16초 가만히: 15초에 한 번
+  assert.equal(sent, 3);
+});

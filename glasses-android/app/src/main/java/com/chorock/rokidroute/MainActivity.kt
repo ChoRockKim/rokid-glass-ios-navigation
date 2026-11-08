@@ -52,12 +52,12 @@ class MainActivity : Activity() {
         heading = HeadingProvider(this)
         hud = HudView(this) { heading.heading() }
         hud.onInput = ::handle
-        // 방향이 바뀌면 다시 그리기: 초당 20번까지로 묶고, 1° 넘게 바뀐 경우만 (예전엔 센서가 있으면 초당 60번 계속 그림)
+        // 방향이 바뀌면 다시 그리기: 초당 10번까지로 묶고(배터리), 1° 넘게 바뀐 경우만 (예전엔 센서가 있으면 초당 60번 계속 그림)
         var redrawQueued = false
         heading.onChange = {
             if (!redrawQueued) {
                 redrawQueued = true
-                hud.postDelayed({ redrawQueued = false; hud.headingMoved() }, 50)
+                hud.postDelayed({ redrawQueued = false; hud.headingMoved() }, 100)
             }
         }
         // 화면 전체는 검정(= 안경에서 투명), 안내는 480x282 dp 를 아래 가운데에
@@ -121,7 +121,7 @@ class MainActivity : Activity() {
             override fun run() { updater.check(); hud.postDelayed(this, 6 * 3600_000L) }
         }
         hud.postDelayed(recheck, 6 * 3600_000L)
-        // Wi-Fi 자동 켜기 (rokid-conversate 와 같은 방식): 꺼져 있으면 10초마다 켜 보고, 상태는 왼쪽 아래에
+        // Wi-Fi 자동 켜기 (rokid-conversate 와 같은 방식): 꺼져 있으면 20초마다 켜 보고, 상태는 왼쪽 아래에
         wifi = WifiEnabler(this) { status, detail ->
             hud.post {
                 val was = wifiStatus
@@ -189,7 +189,8 @@ class MainActivity : Activity() {
         registerReceiver(batteryReceiver, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
         runCatching { connectivity.registerDefaultNetworkCallback(netCallback) }
         updateNetwork()
-        heading.start()
+        resumed = true
+        updateSensors()
         wifi.start()
         client.start()
         // R08 브리지가 처음 링 조작부터 이 화면을 "현재 포커스"로 보도록 미리 포커스를 잡는다
@@ -202,8 +203,21 @@ class MainActivity : Activity() {
         runCatching { connectivity.unregisterNetworkCallback(netCallback) }
         client.stop()
         wifi.stop()
+        resumed = false
         heading.stop()
         super.onPause()
+    }
+
+    private var resumed = false
+
+    /**
+     * 배터리: 방향 센서는 지도를 그릴 때만 (길안내 중, 지도 표시가 꺼져 있지 않음).
+     * 경로가 없는 대기 화면·지도 끔이면 센서를 끈다
+     */
+    private fun updateSensors() {
+        val st = hud.state
+        val want = resumed && !st.idle && st.route != null && hud.mapMode != HudView.MapMode.OFF
+        if (want) heading.start() else heading.stop()
     }
 
     /** 서버 메시지 하나가 잘못돼도 앱이 죽지 않게: 그 메시지만 버리고 기록해 둔다 (다음 연결 때 서버로) */
@@ -239,6 +253,7 @@ class MainActivity : Activity() {
             }
         }
         hud.state = next
+        updateSensors()
         if (m.optString("type") == "idle" || m.optString("type") == "arrived") hud.post { maybeAutoInstall() }
         if (voiceWaiting && m.optString("type") in setOf("choose", "notice")) endVoiceWait()
         when (m.optString("type")) {
@@ -647,6 +662,7 @@ class MainActivity : Activity() {
                 val modes = HudView.MapMode.values()
                 hud.mapMode = modes[(hud.mapMode.ordinal + 1) % modes.size]
                 prefs.edit().putString("mapMode", hud.mapMode.name).apply()
+                updateSensors()
                 val note = when (hud.mapMode) {
                     HudView.MapMode.AUTO -> "회전까지 ${HudView.FAINT_FROM_M.toInt()}m 넘게 남으면 흐리게"
                     HudView.MapMode.ALWAYS -> "지도를 항상 또렷하게"

@@ -171,9 +171,10 @@ class WifiEnabler(private val context: Context, private val onStatus: (Status, S
         const val CONVERSATE_HELPER = "com.chorockkim.conversate.wifihelper"
         val HELPERS = listOf(HELPER, CONVERSATE_HELPER)
         const val HELPER_RESULT = "$HELPER.RESULT"
-        const val POLL_MS = 1_000L
-        const val CONNECTED_POLL_MS = 5_000L
-        const val RETRY_MS = 10_000L
+        /** 배터리: 켜는 중 상태 확인 2초, 연결된 뒤 확인 15초, 켜기 재시도 20초 */
+        const val POLL_MS = 2_000L
+        const val CONNECTED_POLL_MS = 15_000L
+        const val RETRY_MS = 20_000L
         /** Still off after this long: say so (and offer the system screen on tap). */
         const val GIVE_UP_MS = 8_000L
     }
