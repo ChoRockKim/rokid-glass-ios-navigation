@@ -45,6 +45,47 @@ export function clovaSpeech(invokeUrl: string, secret: string): Transcriber {
   };
 }
 
+/**
+ * Whisper (OpenAI 호환 /audio/transcriptions). 기본은 Groq (무료 사용량 있음, 키 필요).
+ * hints 는 prompt 로 넘긴다 (Whisper 는 앞 문맥처럼 받아 고유명사 표기를 맞추는 데 쓴다, 길이 제한이 있어 앞쪽 일부만).
+ * 요청 형식은 Groq·OpenAI 공개 문서 기준, 실호출은 키를 넣은 뒤 실서버 로그로 확인
+ */
+export function whisperApi(key: string, base = "https://api.groq.com/openai/v1", model = "whisper-large-v3"): Transcriber {
+  const url = `${base.replace(/\/+$/, "")}/audio/transcriptions`;
+  return async (audio, hints) => {
+    const names = [...new Set(hints.map((h) => h.trim()).filter(Boolean))];
+    let prompt = "";
+    for (const n of names) {
+      if ((prompt + n).length > 180) break;
+      prompt += (prompt ? ", " : "목적지: ") + n;
+    }
+    const form = new FormData();
+    form.append("file", new Blob([new Uint8Array(audio)], { type: "audio/wav" }), "voice.wav");
+    form.append("model", model);
+    form.append("language", "ko");
+    form.append("response_format", "json");
+    form.append("temperature", "0");
+    if (prompt) form.append("prompt", prompt);
+    const res = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${key}` }, body: form, signal: AbortSignal.timeout(15_000), dispatcher });
+    const body = (await res.json().catch(() => null)) as { text?: string; error?: { message?: string } } | null;
+    if (!res.ok || !body) {
+      const why = res.status === 401 ? "키 확인 필요" : res.status === 429 ? "사용량 초과, 잠시 뒤 다시" : `${res.status}`;
+      throw new SttError(`음성 인식 실패 (${why}${body?.error?.message ? ` · ${body.error.message.slice(0, 80)}` : ""})`);
+    }
+    return dropHallucination((body.text ?? "").trim());
+  };
+}
+
+/**
+ * Whisper 는 조용하거나 잡음만 있으면 학습 데이터에 흔한 문장을 지어낸다 (한국어: "시청해 주셔서 감사합니다" 등).
+ * 그런 문장이면 못 알아들은 것으로
+ */
+export function dropHallucination(text: string): string {
+  const t = text.replace(/[\s.!?,~]/g, "");
+  if (/시청해주셔서감사|구독과좋아요|구독좋아요|시청해주셔서고맙|다음영상에서|MBC뉴스|자막제공|자막by|감사합니다$/.test(t) && t.length < 30) return "";
+  return text;
+}
+
 /** 말 끝의 "으로 가자", "까지", "가 줘" 같은 말과 공백·문장부호를 뗀다 */
 export function cleanSpoken(text: string): string {
   let t = text.replace(/[.,!?~"'·]/g, " ").replace(/\s+/g, " ").trim();

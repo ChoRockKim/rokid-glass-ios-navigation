@@ -12,7 +12,7 @@ import { Chooser } from "./chooser.js";
 import { Favorites } from "./favorites.js";
 import { nearbyBoards } from "./nearby.js";
 import { Recent } from "./recent.js";
-import { clovaSpeech } from "./voice.js";
+import { clovaSpeech, whisperApi } from "./voice.js";
 import { kakaoStopLocator } from "./transit.js";
 import { StopCache } from "./stopcache.js";
 
@@ -89,8 +89,14 @@ let slack: Awaited<ReturnType<typeof startSlack>> | null = null;
 /** 안경 음성 검색 (CLOVA Speech). 둘 다 있을 때만 켠다 */
 const CLOVA_SPEECH_INVOKE_URL = process.env.CLOVA_SPEECH_INVOKE_URL ?? "";
 const CLOVA_SPEECH_SECRET = process.env.CLOVA_SPEECH_SECRET ?? "";
-const stt = CLOVA_SPEECH_INVOKE_URL && CLOVA_SPEECH_SECRET ? clovaSpeech(CLOVA_SPEECH_INVOKE_URL, CLOVA_SPEECH_SECRET) : undefined;
-if (!stt) log("CLOVA_SPEECH_INVOKE_URL/SECRET 이 없어 안경 음성 검색을 끕니다");
+/** 또는 Whisper (Groq, 무료 사용량). CLOVA 가 있으면 CLOVA 먼저 */
+const GROQ_API_KEY = process.env.GROQ_API_KEY ?? "";
+const stt = CLOVA_SPEECH_INVOKE_URL && CLOVA_SPEECH_SECRET
+  ? clovaSpeech(CLOVA_SPEECH_INVOKE_URL, CLOVA_SPEECH_SECRET)
+  : GROQ_API_KEY
+    ? whisperApi(GROQ_API_KEY, process.env.GROQ_BASE, process.env.GROQ_STT_MODEL)
+    : undefined;
+log(stt ? `안경 음성 검색: ${CLOVA_SPEECH_SECRET ? "CLOVA Speech" : "Whisper (Groq)"}` : "음성 인식 키(GROQ_API_KEY 또는 CLOVA_SPEECH_*)가 없어 서버 음성 인식을 끕니다");
 
 const api = API_TOKEN
   ? createApi({ nav, apiToken: API_TOKEN, kakaoKey: KAKAO_REST_KEY, log, notify: (t) => slack?.notify(t), pairing: new Pairing(GLASS_TOKEN), chooser, favorites, recents, stt })
