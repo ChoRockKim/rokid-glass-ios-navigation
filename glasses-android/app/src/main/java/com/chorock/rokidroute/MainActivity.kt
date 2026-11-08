@@ -463,7 +463,7 @@ class MainActivity : Activity() {
     }
 
     /** 설정 화면에 보여 줄 음성 인식 방식 */
-    private fun voiceEngineLabel() = if (speech.available) "음성 인식: 안경 (키 없음)" else "음성 인식: 서버 (CLOVA 키)"
+    private fun voiceEngineLabel() = if (speech.available) "음성 인식: 안경 (키 없음)" else "음성 인식: 서버"
 
     private fun endVoiceWait() {
         voiceWaiting = false
@@ -647,7 +647,7 @@ class MainActivity : Activity() {
             Item.BACK_TO_NAV -> { sub = null; hud.menu = null }
             Item.SETTINGS -> showSub(Sub.Group(Item.SETTINGS, listOf(Item.MAP_MODE, Item.RECALIBRATE, Item.VOICE_ENGINE, Item.UPDATE)), 0)
             Item.VOICE -> startVoice()
-            Item.VOICE_ENGINE -> hud.menu = m.copy(note = if (speech.available) "안경에 든 안드로이드 음성 인식 사용 · 안 되면 서버로" else "이 안경엔 음성 인식 서비스가 없음 · 서버에 CLOVA 키가 있어야 함")
+            Item.VOICE_ENGINE -> hud.menu = m.copy(note = if (speech.available) "안경에 든 안드로이드 음성 인식 사용 · 안 되면 서버로" else "이 안경엔 음성 인식 서비스가 없음 · 서버 음성 인식(Groq 또는 CLOVA 키) 사용")
             Item.DEST -> {
                 // 저장해 둔 목록이 있으면 바로 보여 주고, 새 목록을 받으면 바꾼다
                 val saved = cache.favorites()
