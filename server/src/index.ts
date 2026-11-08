@@ -100,7 +100,7 @@ if (!api) log("API_TOKEN 이 없어 폰용 HTTP API(/location, /route, /nav, /st
 const roads = new RoadFeed(nav, log);
 /** 안경 APK 보관 폴더 (Railway 볼륨 /data). 업로드 토큰이 없으면 업로드만 막힌다 */
 const ota = new Ota(process.env.APP_DIR ?? "/data/app", process.env.OTA_UPLOAD_TOKEN ?? "", [GLASS_TOKEN, GLASS_DEVICE_TOKEN].filter(Boolean), log);
-const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, extraTokens: GLASS_DEVICE_TOKEN ? [GLASS_DEVICE_TOKEN] : [], nav, log, api, onPositions: api?.ingest, onReroute: api?.rerouteNow, roads, ota, chooser, favorites: api ? { list: api.favoritesForGlasses, go: api.goFavorite } : undefined, voice: api?.goVoice,
+const glass = startGlassServer({ port: PORT, token: GLASS_TOKEN, extraTokens: GLASS_DEVICE_TOKEN ? [GLASS_DEVICE_TOKEN] : [], nav, log, api, onPositions: api?.ingest, onReroute: api?.rerouteNow, roads, ota, chooser, favorites: api ? { list: api.favoritesForGlasses, go: api.goFavorite } : undefined, voice: api?.goVoice, voiceText: api?.goVoiceText,
   nearby: () => nearbyBoards(nav.lastKnownPosition, { kakao: KAKAO_REST_KEY, bus: process.env.DATA_GO_KR_KEY, subway: process.env.SEOUL_SUBWAY_KEY }, log) });
 // 안경 앱(?choose=1 로 연결)이 붙어 있을 때만 실시간 조회. "버스·지하철 시간" 메뉴는 연 동안만 안경이 요청한다
 // 오래 방치된 경로 자동 종료: 위치가 STALE_ROUTE_MS 동안 안 오고 안경도 안 붙어 있으면

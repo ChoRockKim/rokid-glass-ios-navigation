@@ -38,6 +38,8 @@ export function startGlassServer(opts: {
   nearby?: () => Promise<unknown>;
   /** 안경 마이크 음성(WAV)으로 목적지 찾기 → 결과 문장 */
   voice?: (audio: Buffer) => Promise<string>;
+  /** 안경이 스스로 알아들은 글자(인식 후보들)로 목적지 찾기 → 결과 문장 */
+  voiceText?: (texts: string[]) => Promise<string>;
   /** 목적지 후보 선택지. ?choose=1 로 연결한 화면(안경 APK)에만 띄운다 */
   chooser?: Chooser;
 }): Server {
@@ -162,6 +164,16 @@ export function startGlassServer(opts: {
           void opts.voice(audio)
             .catch((e) => {
               log(`voice failed: ${e instanceof Error ? e.message : String(e)}`);
+              return "음성 검색 실패";
+            })
+            .then((text) => send(ws, { type: "notice", text }));
+      } else if (msg.type === "voice-text") {
+        const texts = (Array.isArray(msg.texts) ? msg.texts : []).filter((t): t is string => typeof t === "string").map((t) => t.slice(0, 100)).slice(0, 5);
+        if (!opts.voiceText) send(ws, { type: "notice", text: "서버에서 음성 검색을 지원하지 않음" });
+        else
+          void opts.voiceText(texts)
+            .catch((e) => {
+              log(`voice-text failed: ${e instanceof Error ? e.message : String(e)}`);
               return "음성 검색 실패";
             })
             .then((text) => send(ws, { type: "notice", text }));

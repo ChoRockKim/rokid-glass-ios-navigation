@@ -118,3 +118,20 @@ test("음성: 못 찾거나 못 알아들으면 다시 말해 달라고", async 
   const off = createApi({ nav, apiToken: "a", kakaoKey: "k", log: () => {} });
   assert.match(await off.goVoice(Buffer.alloc(2000)), /음성 인식 키가 없음/);
 });
+
+test("안경이 알아들은 글자(키 없음): 첫 후보로 못 찾으면 다음 후보, 서버 음성 키가 없어도 됨", async () => {
+  const { createApi } = await import("./api.js");
+  const { Navigator } = await import("./navigation.js");
+  const { Chooser } = await import("./chooser.js");
+  const nav = new Navigator();
+  const chooser = new Chooser();
+  const asked: string[] = [];
+  chooser.attach((m) => { if (m.type === "choose") { asked.push(m.title); setTimeout(() => chooser.answer(m.id, -1), 5); } });
+  const api = createApi({ nav, apiToken: "a", kakaoKey: "k", log: () => {}, chooser });
+  api.ingest([{ lat: 37.5, lon: 127.0, ts: Date.now() }]);
+  // "없는곳" 은 카카오 결과 없음 → 두 번째 후보 "회기역" 으로 찾음
+  const text = await api.goVoiceText(["없는곳으로 가자", "회기역으로 가자"]);
+  assert.equal(asked[0], '들은 말: "회기역"');
+  assert.match(text, /취소/);
+  assert.match(await api.goVoiceText([]), /못 알아들었어요/);
+});

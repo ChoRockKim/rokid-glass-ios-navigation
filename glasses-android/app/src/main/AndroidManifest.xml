@@ -19,6 +19,10 @@
     <queries>
         <package android:name="com.chorock.rokidroute.wifihelper" />
         <package android:name="com.chorockkim.conversate.wifihelper" />
+        <!-- 말해서 찾기: 안경에 음성 인식 서비스가 있는지 보려면 필요 (Android 11+) -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
     </queries>
 
     <application

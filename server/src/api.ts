@@ -253,37 +253,63 @@ export function createApi(deps: ApiDeps) {
    */
   async function goVoice(audio: Buffer): Promise<string> {
     if (!stt) return "서버에 음성 인식 키가 없음";
+    return oneAtATime(async () => {
+      let heard: string;
+      try {
+        heard = await stt!(audio, savedPlaces().map((x) => x.name));
+      } catch (e) {
+        log(`voice: ${e instanceof Error ? e.message : String(e)}`);
+        return e instanceof SttError ? e.message : "음성 인식 실패";
+      }
+      return voiceFlow([heard]);
+    });
+  }
+
+  /**
+   * 안경이 스스로 알아들은 글자 (안드로이드 음성 인식, 키 없음). texts = 인식 후보 (가장 그럴듯한 것부터).
+   * 그다음은 서버 음성 인식과 같은 흐름
+   */
+  async function goVoiceText(texts: string[]): Promise<string> {
+    return oneAtATime(() => voiceFlow(texts));
+  }
+
+  async function oneAtATime(job: () => Promise<string>): Promise<string> {
     if (voiceBusy) return "앞의 음성 검색을 처리하는 중 · 끝난 뒤 다시";
     voiceBusy = true;
     try {
-      return await voiceFlow(audio);
+      return await job();
     } finally {
       voiceBusy = false;
     }
   }
 
-  async function voiceFlow(audio: Buffer): Promise<string> {
-    const saved = [
-      ...(favorites?.list() ?? []).map((x) => ({ name: x.name, address: x.address, x: x.x, y: x.y })),
-      ...(recents?.list() ?? []).map((x) => ({ name: x.name, address: x.address, x: x.x, y: x.y })),
-    ];
-    let heard: string;
-    try {
-      heard = await stt!(audio, saved.map((x) => x.name));
-    } catch (e) {
-      log(`voice: ${e instanceof Error ? e.message : String(e)}`);
-      return e instanceof SttError ? e.message : "음성 인식 실패";
-    }
-    const spoken = cleanSpoken(heard);
-    log(`voice: "${heard}" → "${spoken}"`);
+  const savedPlaces = () => [
+    ...(favorites?.list() ?? []).map((x) => ({ name: x.name, address: x.address, x: x.x, y: x.y })),
+    ...(recents?.list() ?? []).map((x) => ({ name: x.name, address: x.address, x: x.x, y: x.y })),
+  ];
+
+  async function voiceFlow(heardList: string[]): Promise<string> {
+    const saved = savedPlaces();
+    const alts = [...new Set(heardList.map(cleanSpoken).filter(Boolean))].slice(0, 3);
+    const spoken = alts[0] ?? "";
+    log(`voice: "${heardList[0] ?? ""}" → "${spoken}"${alts.length > 1 ? ` (다른 후보: ${alts.slice(1).join(", ")})` : ""}`);
     if (!spoken) return "못 알아들었어요 · 다시 말해 주세요";
     const p = nav.lastKnownPosition;
     if (!p) return `들은 말 "${spoken}" · 현재 위치 없음 (Overland 확인)`;
     const f: Place = { name: "현재 위치", address: "", x: p.lon, y: p.lat };
-    const mine = matchSaved(spoken, saved.filter((x, i) => saved.findIndex((y) => y.name === x.name) === i));
+    // 인식 후보 여러 개 중 어느 것이든 즐겨찾기·최근과 닮으면 ★
+    const uniq = saved.filter((x, i) => saved.findIndex((y) => y.name === x.name) === i);
+    let shown = spoken;
+    const mine = alts.flatMap((t) => matchSaved(t, uniq)).filter((x, i, a) => a.findIndex((y) => y.name === x.name) === i).slice(0, 3);
     let found: PlaceCandidate[] = [];
     try {
       found = await searchPlaces(spoken, kakaoKey, { lon: p.lon, lat: p.lat });
+      // 첫 후보로 못 찾으면 다음 인식 후보로 (제목도 그 후보로)
+      for (const t of alts.slice(1)) {
+        if (found.length) break;
+        found = await searchPlaces(t, kakaoKey, { lon: p.lon, lat: p.lat });
+        if (found.length) shown = t;
+      }
     } catch (e) {
       if (!(e instanceof KakaoError)) throw e;
     }
@@ -294,7 +320,7 @@ export function createApi(deps: ApiDeps) {
     ].slice(0, 6);
     if (!options.length) return `"${spoken}" 을(를) 찾지 못함 · 다시 말해 주세요`;
     if (!chooser?.available) return "안경 화면 연결 없음";
-    const i = await pickOnGlasses(`들은 말: "${spoken}"`, options.map((o) => o.label));
+    const i = await pickOnGlasses(`들은 말: "${shown}"`, options.map((o) => o.label));
     if (i === null) return "취소 · 다시 말하려면 메뉴 > 말해서 찾기";
     return goPlace(f, options[i]!.place, "transit");
   }
@@ -702,5 +728,5 @@ export function createApi(deps: ApiDeps) {
     }
     return false;
   };
-  return Object.assign(handle, { ingest, rerouteNow, favoritesForGlasses, goFavorite, goVoice });
+  return Object.assign(handle, { ingest, rerouteNow, favoritesForGlasses, goFavorite, goVoice, goVoiceText });
 }

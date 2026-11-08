@@ -138,6 +138,8 @@ export type GlassInput =
   /** 안경 메뉴: 지금 위치 주변 버스·지하철 도착 */
   /** 안경 마이크로 말한 목적지 (WAV, base64) */
   | { type: "voice"; audio: string }
+  /** 안경이 스스로 알아들은 목적지 (안드로이드 음성 인식 후보들, 가장 그럴듯한 것부터) */
+  | { type: "voice-text"; texts: string[] }
   | { type: "nearby" }
   /** 안경 메뉴: 즐겨찾기 목록 요청 */
   | { type: "favorites" }

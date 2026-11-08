@@ -199,6 +199,7 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         if (voice.active) { voice.cancel(); hud.voiceModal = null }
+        if (speech.active) { speech.cancel(); hud.voiceModal = null }
         runCatching { unregisterReceiver(batteryReceiver) }
         runCatching { connectivity.unregisterNetworkCallback(netCallback) }
         client.stop()
@@ -415,7 +416,9 @@ class MainActivity : Activity() {
     private var voiceWaiting = false
     private val voiceTimeout = Runnable { if (voiceWaiting) { endVoiceWait(); showNotice("음성 검색 응답 없음 · 다시 시도") } }
 
-    private fun startVoice() {
+    private val speech by lazy { DeviceSpeech(this) }
+
+    private fun startVoice(forceServer: Boolean = false) {
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             hud.menu = hud.menu?.copy(note = "마이크 권한을 허용해 주세요")
             requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), REQ_MIC)
@@ -424,19 +427,43 @@ class MainActivity : Activity() {
         if (!client.connected) { hud.menu = hud.menu?.copy(note = "연결 끊김 · 음성 검색은 연결돼 있어야 함"); return }
         sub = null
         hud.menu = null
+        // 안경 자체 음성 인식 (키 없음)이 되면 그것으로. 안 되면 녹음해서 서버(CLOVA)로
+        if (!forceServer && speech.available) {
+            val ok = speech.start(
+                onReady = { hud.voiceModal = HudView.WifiModal("듣는 중", "목적지를 말하세요 · 탭 = 끝 · 뒤로 = 취소", level = 0f) },
+                onLevel = { lv -> hud.voiceModal?.takeIf { it.level != null }?.let { hud.voiceModal = it.copy(level = lv) } },
+                onDone = ::onDeviceSpeech,
+            )
+            if (ok) { hud.voiceModal = HudView.WifiModal("준비 중", "마이크를 켜는 중"); return }
+        }
         if (!voice.start()) { showNotice("마이크를 열지 못함"); return }
         hud.voiceModal = HudView.WifiModal("듣는 중", "목적지를 말하세요 · 탭 = 끝 · 뒤로 = 취소", level = 0f)
     }
 
+    /** 안경 음성 인식 결과: 글자를 서버로 (서버는 즐겨찾기·카카오 후보를 띄움). 인식 서비스 문제면 서버 인식으로 다시 */
+    private fun onDeviceSpeech(r: DeviceSpeech.Result) {
+        when {
+            r.texts.isNotEmpty() -> sendVoice(JSONObject().put("type", "voice-text").put("texts", org.json.JSONArray(r.texts)), "찾는 중", "\"${r.texts.first()}\" · 후보가 뜨면 골라 주세요")
+            r.fallback -> { showNotice("${r.error} · 서버 인식으로"); startVoice(forceServer = true) }
+            else -> { hud.voiceModal = null; showNotice(r.error ?: "못 알아들었어요") }
+        }
+    }
+
     private fun onVoiceRecorded(wav: ByteArray?) {
         if (wav == null) { hud.voiceModal = null; showNotice("말소리를 못 들었어요 · 다시 시도"); return }
-        val json = JSONObject().put("type", "voice").put("audio", Base64.encodeToString(wav, Base64.NO_WRAP))
+        sendVoice(JSONObject().put("type", "voice").put("audio", Base64.encodeToString(wav, Base64.NO_WRAP)), "알아듣는 중", "잠시만요 · 후보가 뜨면 골라 주세요")
+    }
+
+    private fun sendVoice(json: JSONObject, title: String, detail: String) {
         if (!client.send(json)) { hud.voiceModal = null; showNotice("연결 끊김 · 다시 시도"); return }
         voiceWaiting = true
-        hud.voiceModal = HudView.WifiModal("알아듣는 중", "잠시만요 · 후보가 뜨면 골라 주세요")
+        hud.voiceModal = HudView.WifiModal(title, detail)
         hud.removeCallbacks(voiceTimeout)
         hud.postDelayed(voiceTimeout, 25_000)
     }
+
+    /** 설정 화면에 보여 줄 음성 인식 방식 */
+    private fun voiceEngineLabel() = if (speech.available) "음성 인식: 안경 (키 없음)" else "음성 인식: 서버 (CLOVA 키)"
 
     private fun endVoiceWait() {
         voiceWaiting = false
@@ -514,7 +541,7 @@ class MainActivity : Activity() {
      *   설정 ▸: 지도 표시 / 방향 다시 맞추기 / 업데이트
      *   목적지 ▸: 최근 (n) / 즐겨찾기 카테고리들 → 장소 → 바로 안내
      */
-    enum class Item { BACK_TO_NAV, DEST, VOICE, NEARBY, SETTINGS, STOP, REROUTE, RECALIBRATE, MAP_MODE, UPDATE, EXIT }
+    enum class Item { BACK_TO_NAV, DEST, VOICE, NEARBY, SETTINGS, VOICE_ENGINE, STOP, REROUTE, RECALIBRATE, MAP_MODE, UPDATE, EXIT }
 
     private val navigating get() = !hud.state.idle && hud.state.progress.isNotEmpty()
 
@@ -538,6 +565,7 @@ class MainActivity : Activity() {
         Item.BACK_TO_NAV -> if (navigating) "길안내 화면으로" else "화면 닫기"
         Item.DEST -> "목적지 ▸"
         Item.VOICE -> "말해서 찾기"
+        Item.VOICE_ENGINE -> voiceEngineLabel()
         Item.SETTINGS -> "설정 ▸" + if (updater.available != null) "  ●" else ""
         Item.NEARBY -> "버스·지하철 시간"
         Item.STOP -> "안내 종료"
@@ -559,11 +587,11 @@ class MainActivity : Activity() {
     private var stopArmed = false
 
     fun handle(input: Input) {
-        if (voice.active) {
+        if (voice.active || speech.active) {
             // 듣는 중: 탭 = 끝내고 보내기, 뒤로 = 취소
             when (input) {
-                Input.SELECT -> voice.stop()
-                Input.BACK -> { voice.cancel(); hud.voiceModal = null; showNotice("말해서 찾기 취소") }
+                Input.SELECT -> if (speech.active) speech.stop() else voice.stop()
+                Input.BACK -> { if (speech.active) speech.cancel() else voice.cancel(); hud.voiceModal = null; showNotice("말해서 찾기 취소") }
                 else -> {}
             }
             return
@@ -617,8 +645,9 @@ class MainActivity : Activity() {
     private fun select(item: Item, m: HudView.Menu) {
         when (item) {
             Item.BACK_TO_NAV -> { sub = null; hud.menu = null }
-            Item.SETTINGS -> showSub(Sub.Group(Item.SETTINGS, listOf(Item.MAP_MODE, Item.RECALIBRATE, Item.UPDATE)), 0)
+            Item.SETTINGS -> showSub(Sub.Group(Item.SETTINGS, listOf(Item.MAP_MODE, Item.RECALIBRATE, Item.VOICE_ENGINE, Item.UPDATE)), 0)
             Item.VOICE -> startVoice()
+            Item.VOICE_ENGINE -> hud.menu = m.copy(note = if (speech.available) "안경에 든 안드로이드 음성 인식 사용 · 안 되면 서버로" else "이 안경엔 음성 인식 서비스가 없음 · 서버에 CLOVA 키가 있어야 함")
             Item.DEST -> {
                 // 저장해 둔 목록이 있으면 바로 보여 주고, 새 목록을 받으면 바꾼다
                 val saved = cache.favorites()
