@@ -23,8 +23,8 @@ Railway 화면 구성은 바뀔 수 있다. 아래 메뉴 이름은 작성 시�
 | `API_TOKEN` | 폰(단축어·Overland)용. 새로 만들 것: `openssl rand -hex 16` |
 | `SEOUL_SUBWAY_KEY` | (선택) 서울 열린데이터광장 |
 | `DATA_GO_KR_KEY` | (선택) 공공데이터포털, Decoding 키 |
-| `GROQ_API_KEY` | (선택) 안경 "말해서 찾기" 서버 음성 인식. Groq(console.groq.com) API 키, Whisper `whisper-large-v3` (무료 사용량). 모델은 `GROQ_STT_MODEL` 로 바꿀 수 있음. CLOVA 가 있으면 CLOVA 먼저 |
-| `CLOVA_SPEECH_INVOKE_URL` | (선택) 안경 "말해서 찾기". 네이버 클라우드 CLOVA Speech 도메인 → 빌더 → Invoke URL |
+| `WHISPER_DISABLED` | (선택) `1` 이면 서버 음성 인식(말해서 찾기)을 끈다. 기본은 이미지에 든 faster-whisper small 로 키 없이 동작 (첫 요청 때 모델 로드, 10분 안 쓰면 내림 · `WHISPER_IDLE_MS`) |
+| `CLOVA_SPEECH_INVOKE_URL` | (선택) 안경 "말해서 찾기"를 CLOVA 로 (있으면 Whisper 대신). 네이버 클라우드 CLOVA Speech 도메인 → 빌더 → Invoke URL |
 | `CLOVA_SPEECH_SECRET` | (선택) 같은 곳의 Secret Key. 두 값이 다 있어야 켜진다 |
 | `STALE_ROUTE_MS` | (선택) 위치가 이만큼 안 오고 안경도 연결 안 돼 있으면 경로 자동 종료. 기본 5400000 (90분) |
 | `STOPS_FILE` | (선택) 찾아 둔 정류장 위치 기억 파일. 기본 `/data/stops.json` |

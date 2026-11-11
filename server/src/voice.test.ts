@@ -136,32 +136,37 @@ test("안경이 알아들은 글자(키 없음): 첫 후보로 못 찾으면 다
   assert.match(await api.goVoiceText([]), /못 알아들었어요/);
 });
 
-test("Whisper(Groq): 요청 형식(인증, 파일, 모델, 한국어, 힌트 prompt), 결과, 지어낸 문장 거르기, 키 오류", async () => {
-  const { whisperApi, SttError, dropHallucination } = await import("./voice.js");
-  let seen: { path?: string; auth?: string; body?: string } = {};
-  let reply: { status: number; body: unknown } = { status: 200, body: { text: " 회기역으로 가자 " } };
-  const srv = createServer((req, res) => {
-    const chunks: Buffer[] = [];
-    req.on("data", (c) => chunks.push(c));
-    req.on("end", () => {
-      seen = { path: req.url, auth: String(req.headers.authorization), body: Buffer.concat(chunks).toString("utf8") };
-      res.writeHead(reply.status, { "content-type": "application/json" }).end(JSON.stringify(reply.body));
-    });
-  });
-  await new Promise<void>((r) => srv.listen(0, r));
-  const stt = whisperApi("gk", `http://127.0.0.1:${(srv.address() as { port: number }).port}/openai/v1/`);
-  assert.equal(await stt(Buffer.from("RIFF"), ["집", "단골 국밥"]), "회기역으로 가자");
-  assert.equal(seen.path, "/openai/v1/audio/transcriptions");
-  assert.equal(seen.auth, "Bearer gk");
-  assert.match(seen.body!, /name="file"; filename="voice.wav"/);
-  assert.match(seen.body!, /name="model"\r\n\r\nwhisper-large-v3\r\n/);
-  assert.match(seen.body!, /name="language"\r\n\r\nko\r\n/);
-  assert.match(seen.body!, /name="prompt"\r\n\r\n목적지: 집, 단골 국밥\r\n/);
-  // 조용할 때 지어낸 문장은 못 알아들은 것으로
-  reply = { status: 200, body: { text: "시청해 주셔서 감사합니다." } };
-  assert.equal(await stt(Buffer.from("RIFF"), []), "");
+test("서버 Whisper (키 없음): 처음 요청 때 엔진을 띄우고, 힌트를 넘기고, 지어낸 문장은 거르고, 안 쓰면 내린다", async () => {
+  const { localWhisper, dropHallucination, SttError } = await import("./voice.js");
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  // 모델 대신: 받은 prompt 와 WAV 길이로 답하는 가짜 워커 (실제 worker.py 와 같은 줄 단위 JSON)
+  const dir = mkdtempSync(join(tmpdir(), "whisper-"));
+  const script = join(dir, "fake.py");
+  writeFileSync(script, [
+    "import sys, json, base64",
+    "print(json.dumps({'ready': True, 'ms': 5}), flush=True)",
+    "for line in sys.stdin:",
+    "    r = json.loads(line)",
+    "    n = len(base64.b64decode(r['wav']))",
+    "    if n == 3: print(json.dumps({'id': r['id'], 'text': '시청해 주셔서 감사합니다.'}), flush=True)",
+    "    elif n == 4: print(json.dumps({'id': r['id'], 'error': 'bad wav'}), flush=True)",
+    "    else: print(json.dumps({'id': r['id'], 'text': ' 회기역으로 가자 ' + r['prompt'], 'ms': 1}, ensure_ascii=False), flush=True)",
+  ].join("\n"));
+  const logs: string[] = [];
+  const stt = localWhisper({ script, idleMs: 200, log: (m) => logs.push(m) });
+  assert.equal(await stt(Buffer.alloc(10), ["집", "단골 국밥"]), "회기역으로 가자 목적지: 집, 단골 국밥");
+  assert.equal(await stt(Buffer.alloc(3), []), ""); // 지어낸 문장
+  await assert.rejects(stt(Buffer.alloc(4), []), (e) => e instanceof SttError && /bad wav/.test(e.message));
+  assert.equal(logs.filter((l) => /모델 준비/.test(l)).length, 1, "엔진은 한 번만 띄움");
+  await new Promise((r) => setTimeout(r, 400));
+  assert.ok(logs.some((l) => /내림/.test(l)));
+  // 내린 뒤 다시 쓰면 다시 띄움
+  assert.match(await stt(Buffer.alloc(10), []), /^회기역으로 가자/);
+  assert.equal(logs.filter((l) => /모델 준비/.test(l)).length, 2);
+  // 엔진을 못 띄우면 오류
+  const broken = localWhisper({ python: "/nonexistent/python", script });
+  await assert.rejects(broken(Buffer.alloc(10), []), (e) => e instanceof SttError);
   assert.equal(dropHallucination("회기역"), "회기역");
-  reply = { status: 401, body: { error: { message: "Invalid API Key" } } };
-  await assert.rejects(stt(Buffer.from("RIFF"), []), (e) => e instanceof SttError && /키 확인 필요/.test(e.message));
-  srv.close();
 });

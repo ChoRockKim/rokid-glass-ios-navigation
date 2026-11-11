@@ -2,6 +2,8 @@
 // CLOVA Speech 요청 형식은 네이버 클라우드 문서(장문 인식 API, 로컬 파일 /recognizer/upload, completion=sync, boostings)를 보고 쓴 것.
 // 실제 호출은 아직 해 보지 못함 (키 필요) → 실서버 로그로 확인.
 import { Blob } from "node:buffer";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { fetch, FormData } from "undici";
 import { dispatcher } from "./proxy.js";
 
@@ -46,33 +48,100 @@ export function clovaSpeech(invokeUrl: string, secret: string): Transcriber {
 }
 
 /**
- * Whisper (OpenAI 호환 /audio/transcriptions). 기본은 Groq (무료 사용량 있음, 키 필요).
- * hints 는 prompt 로 넘긴다 (Whisper 는 앞 문맥처럼 받아 고유명사 표기를 맞추는 데 쓴다, 길이 제한이 있어 앞쪽 일부만).
- * 요청 형식은 Groq·OpenAI 공개 문서 기준, 실호출은 키를 넣은 뒤 실서버 로그로 확인
+ * 서버에서 직접 돌리는 Whisper (키 없음). server/whisper/worker.py (faster-whisper small int8) 를 처음 요청 때 띄우고,
+ * IDLE_MS 동안 안 쓰면 내린다 (모델이 메모리를 수백 MB 차지 → 늘 띄워 두면 Railway 메모리 요금).
+ * 처음 한 번은 모델 로드(수 초)가 더해지고, 그다음은 문장 하나 약 1초 (2026-11-11 4코어 로컬 측정, Railway 는 재 봐야 함).
+ * hints 는 initial_prompt 로 (고유명사 표기를 맞추는 데 도움)
  */
-export function whisperApi(key: string, base = "https://api.groq.com/openai/v1", model = "whisper-large-v3"): Transcriber {
-  const url = `${base.replace(/\/+$/, "")}/audio/transcriptions`;
+export function localWhisper(opts: { python?: string; script?: string; idleMs?: number; log?: (m: string) => void } = {}): Transcriber {
+  const python = opts.python ?? process.env.WHISPER_PYTHON ?? "python3";
+  const script = opts.script ?? process.env.WHISPER_WORKER ?? fileURLToPath(new URL("../whisper/worker.py", import.meta.url));
+  const idleMs = opts.idleMs ?? Number(process.env.WHISPER_IDLE_MS ?? 10 * 60_000);
+  let proc: ChildProcessWithoutNullStreams | null = null;
+  let ready: Promise<void> | null = null;
+  let seq = 0;
+  const waiting = new Map<number, { resolve: (t: string) => void; reject: (e: Error) => void }>();
+  let idle: ReturnType<typeof setTimeout> | null = null;
+
+  const stop = () => {
+    if (!proc) return;
+    opts.log?.("whisper: 안 쓴 지 오래돼 내림");
+    proc.kill();
+    proc = null;
+    ready = null;
+  };
+  const start = () => {
+    const p = spawn(python, [script], { stdio: ["pipe", "pipe", "pipe"] });
+    // 서버가 끝나면 엔진도 같이
+    const killOnExit = () => p.kill();
+    process.once("exit", killOnExit);
+    p.once("exit", () => process.off("exit", killOnExit));
+    proc = p;
+    let buf = "";
+    let onReady: (() => void) | null = null;
+    let onFail: ((e: Error) => void) | null = null;
+    ready = new Promise<void>((res, rej) => { onReady = res; onFail = rej; });
+    ready.catch(() => {});
+    p.stdout.setEncoding("utf8");
+    p.stdout.on("data", (chunk: string) => {
+      buf += chunk;
+      let k: number;
+      while ((k = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, k).trim();
+        buf = buf.slice(k + 1);
+        if (!line) continue;
+        let m: { ready?: boolean; id?: number; text?: string; error?: string; ms?: number };
+        try { m = JSON.parse(line); } catch { continue; }
+        if (m.ready) { opts.log?.(`whisper: 모델 준비 ${m.ms}ms`); onReady?.(); continue; }
+        const w = m.id === undefined ? undefined : waiting.get(m.id);
+        if (!w) continue;
+        waiting.delete(m.id!);
+        if (m.error !== undefined) w.reject(new SttError(`음성 인식 실패 (${m.error.slice(0, 80)})`));
+        else { opts.log?.(`whisper: ${m.ms}ms`); w.resolve(m.text ?? ""); }
+      }
+    });
+    let err = "";
+    p.stderr.setEncoding("utf8");
+    p.stderr.on("data", (c: string) => { err = (err + c).slice(-500); });
+    const fail = (why: string) => {
+      if (proc === p) { proc = null; ready = null; }
+      const e = new SttError(`음성 인식 실패 (${why})`);
+      onFail?.(e);
+      for (const w of waiting.values()) w.reject(e);
+      waiting.clear();
+    };
+    p.on("error", (e) => fail(e.message));
+    p.on("exit", (code) => { if (code !== null && code !== 0) opts.log?.(`whisper 종료 ${code}: ${err.trim().split("\n").pop() ?? ""}`); fail(`엔진 종료 ${code ?? ""}`.trim()); });
+  };
+
   return async (audio, hints) => {
+    if (idle) clearTimeout(idle);
+    if (!proc) start();
+    const p = proc!;
+    let loadTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([ready!, new Promise((_, rej) => { loadTimer = setTimeout(() => rej(new SttError("음성 인식 실패 (모델 로드 시간 초과)")), 120_000); })]);
+    } finally {
+      clearTimeout(loadTimer);
+    }
     const names = [...new Set(hints.map((h) => h.trim()).filter(Boolean))];
     let prompt = "";
     for (const n of names) {
       if ((prompt + n).length > 180) break;
       prompt += (prompt ? ", " : "목적지: ") + n;
     }
-    const form = new FormData();
-    form.append("file", new Blob([new Uint8Array(audio)], { type: "audio/wav" }), "voice.wav");
-    form.append("model", model);
-    form.append("language", "ko");
-    form.append("response_format", "json");
-    form.append("temperature", "0");
-    if (prompt) form.append("prompt", prompt);
-    const res = await fetch(url, { method: "POST", headers: { authorization: `Bearer ${key}` }, body: form, signal: AbortSignal.timeout(15_000), dispatcher });
-    const body = (await res.json().catch(() => null)) as { text?: string; error?: { message?: string } } | null;
-    if (!res.ok || !body) {
-      const why = res.status === 401 ? "키 확인 필요" : res.status === 429 ? "사용량 초과, 잠시 뒤 다시" : `${res.status}`;
-      throw new SttError(`음성 인식 실패 (${why}${body?.error?.message ? ` · ${body.error.message.slice(0, 80)}` : ""})`);
-    }
-    return dropHallucination((body.text ?? "").trim());
+    const id = ++seq;
+    let reqTimer: ReturnType<typeof setTimeout> | undefined;
+    const text = await new Promise<string>((resolve, reject) => {
+      waiting.set(id, { resolve, reject });
+      p.stdin.write(JSON.stringify({ id, wav: audio.toString("base64"), prompt }) + "\n");
+      reqTimer = setTimeout(() => { if (waiting.delete(id)) reject(new SttError("음성 인식 실패 (시간 초과)")); }, 30_000);
+    }).finally(() => {
+      clearTimeout(reqTimer);
+      if (idle) clearTimeout(idle);
+      idle = setTimeout(stop, idleMs);
+    });
+    return dropHallucination(text.trim());
   };
 }
 
