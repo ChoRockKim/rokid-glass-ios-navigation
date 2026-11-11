@@ -45,7 +45,7 @@ class HudViewSnapshotTest {
         v.clock = { T0 }
         v.device = HudView.Device(battery = 64, network = "Wi-Fi", server = true)
         v.update = "0.3.3"
-        v.menu = HudView.Menu(listOf("길안내 화면으로", "경로 다시 찾기", "말해서 찾기", "목적지 ▸", "버스·지하철 시간", "안내 종료", "설정 ▸  ●", "앱 종료"), selected = 1)
+        v.menu = HudView.Menu(listOf("길안내 화면으로", "경로 다시 찾기", "목적지 ▸", "버스·지하철 시간", "안내 종료", "설정 ▸  ●", "앱 종료"), selected = 1)
         paparazzi.snapshot(v, "09_menu")
     }
 
@@ -168,7 +168,7 @@ class HudViewSnapshotTest {
         val v = HudView(paparazzi.context) { null }
         v.clock = { T0 }
         v.device = HudView.Device(battery = 82, network = "Wi-Fi", server = true)
-        v.menu = HudView.Menu(listOf("최근 (5)", "집 (1)", "회사 (2)", "맛집 (4)"), selected = 0, title = "목적지", hint = "쓸기 이동 · 탭 선택 · 뒤로 이전")
+        v.menu = HudView.Menu(listOf("말해서 찾기", "최근 (5)", "집 (1)", "회사 (2)", "맛집 (4)"), selected = 0, title = "목적지", hint = "쓸기 이동 · 탭 선택 · 뒤로 이전")
         paparazzi.snapshot(v, "24_menu_destinations")
         v.menu = HudView.Menu(listOf("왕십리역 경의중앙선 · 3.6km", "맥도날드 외대점 · 768m", "경희대학교 서울캠퍼스 · 351m", "회사 · 9.4km", "단골 국밥 · 320m"), selected = 0,
             title = "목적지 · 최근", note = "서울 성동구 왕십리로 지하 300", hint = "쓸기 이동 · 탭 선택 · 뒤로 이전")

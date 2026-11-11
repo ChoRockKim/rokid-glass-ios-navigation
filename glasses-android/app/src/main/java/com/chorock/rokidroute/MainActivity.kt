@@ -358,15 +358,16 @@ class MainActivity : Activity() {
         sub = s
         val hint = "쓸기 이동 · 탭 선택 · 뒤로 이전"
         hud.menu = when (s) {
-            Sub.Loading -> HudView.Menu(listOf("불러오는 중…"), title = "목적지", hint = hint)
+            // 목적지 화면 맨 위는 "말해서 찾기" (그 아래 최근·즐겨찾기 카테고리)
+            Sub.Loading -> HudView.Menu(listOf(VOICE_LABEL, "불러오는 중…"), selected.coerceIn(0, 1), title = "목적지", hint = hint)
             is Sub.Group -> HudView.Menu(s.items.map(::label), selected, title = "설정", hint = hint)
             is Sub.Nearby -> HudView.Menu(
                 emptyList(), title = "버스·지하철 시간" + (s.at?.let { " · ${HudView.clockText(it)} 기준" } ?: ""),
                 note = s.note, hint = "탭 새로고침 · 20초마다 갱신 · 뒤로 이전", boards = s.boards ?: emptyList(), boardsAt = s.at,
             )
             is Sub.Categories ->
-                if (s.data.keys.isEmpty()) HudView.Menu(listOf("등록된 장소 없음"), title = "목적지", note = "폰 브라우저 /places 에서 즐겨찾기 추가", hint = hint)
-                else HudView.Menu(s.data.keys.map { c -> "$c (${s.data.placesOf(c).size})" }, selected, title = "목적지", hint = hint)
+                if (s.data.keys.isEmpty()) HudView.Menu(listOf(VOICE_LABEL, "등록된 장소 없음"), selected.coerceIn(0, 1), title = "목적지", note = "폰 브라우저 /places 에서 즐겨찾기 추가", hint = hint)
+                else HudView.Menu(listOf(VOICE_LABEL) + s.data.keys.map { c -> "$c (${s.data.placesOf(c).size})" }, selected, title = "목적지", hint = hint)
             is Sub.Places -> s.items.let { list ->
                 HudView.Menu(list.map { it.name + distText(it.distance) }, selected, title = "목적지 · ${s.category}", note = list.getOrNull(selected)?.address ?: "", hint = hint)
             }
@@ -391,9 +392,12 @@ class MainActivity : Activity() {
                 is Sub.Places -> showSub(Sub.Categories(s.data), s.parentSel)
             }
             Input.SELECT -> when (s) {
-                Sub.Loading, is Sub.Nearby -> {}
+                is Sub.Nearby -> {}
+                Sub.Loading -> if (m.selected == 0) startVoice()
                 is Sub.Group -> s.items.getOrNull(m.selected)?.let { select(it, m) }
-                is Sub.Categories -> s.data.keys.getOrNull(m.selected)?.let { showSub(Sub.Places(s.data, it, m.selected), 0) }
+                is Sub.Categories ->
+                    if (m.selected == 0) startVoice()
+                    else s.data.keys.getOrNull(m.selected - 1)?.let { showSub(Sub.Places(s.data, it, m.selected), 0) }
                 // 서버가 기존 길찾기와 같은 규칙으로: 직선 800m 안이면 도보, 아니면 대중교통 후보(안경에서 고름), 대중교통이 없으면 도보
                 is Sub.Places -> s.items.getOrNull(m.selected)?.let { fav ->
                     sub = null
@@ -484,6 +488,8 @@ class MainActivity : Activity() {
     companion object {
         /** 목적지 화면의 "최근" 카테고리 이름 */
         const val RECENT = "최근"
+        /** 목적지 화면 맨 위 항목 */
+        const val VOICE_LABEL = "말해서 찾기"
         private const val REQ_MIC = 7
     }
 
@@ -546,7 +552,7 @@ class MainActivity : Activity() {
     private val navigating get() = !hud.state.idle && hud.state.progress.isNotEmpty()
 
     private fun mainItems() = listOfNotNull(
-        Item.BACK_TO_NAV, Item.REROUTE.takeIf { navigating }, Item.VOICE, Item.DEST, Item.NEARBY,
+        Item.BACK_TO_NAV, Item.REROUTE.takeIf { navigating }, Item.DEST, Item.NEARBY,
         Item.STOP.takeIf { navigating }, Item.SETTINGS, Item.EXIT,
     )
 
